@@ -39,7 +39,7 @@ class Database:
         if which == 'all':
             query = f"SELECT name FROM business_directions;"
         else:
-            query = f"SELECT bd.name FROM clients JOIN business_directions bd ON business_direction_id = bd.id;"
+            query = f"SELECT DISTINCT bd.name FROM clients JOIN business_directions bd ON business_direction_id = bd.id;"
         self.curr.execute(query)
         result = self.curr.fetchall()
         if result:
@@ -119,13 +119,19 @@ class Database:
         self.curr.execute(query)
         self.connection.commit()
 
-    def get_last_sent_messages(self):
-        query = "SELECT clients.tg_id, message_id, name, surname, phone_number FROM sent_messages JOIN clients " + \
-                "ON sent_messages.tg_id = clients.tg_id WHERE sending_datetime >= NOW()::TIMESTAMP - INTERVAL '48 HOUR';"
+    def get_last_sent_messages(self, latest_one=False):
+        if latest_one:
+            query = "SELECT clients.tg_id, message_id, name, surname, phone_number, sending_datetime " + \
+                    "FROM sent_messages JOIN clients ON sent_messages.tg_id = clients.tg_id ORDER BY sending_datetime DESC LIMIT 1;"
+        else:
+            query = "SELECT clients.tg_id, message_id, name, surname, phone_number FROM sent_messages JOIN clients " + \
+                    "ON sent_messages.tg_id = clients.tg_id WHERE sending_datetime >= NOW()::TIMESTAMP - INTERVAL '48 HOUR';"
         self.curr.execute(query)
         result = self.curr.fetchall()
         if result:
             result = list(map(lambda x: list(x), result))
+            if latest_one:
+                return result[0]
             # из каждого чата берется только последнее сообщение даже если найдено несколько
             formatted_result = []
             people_already_taken = dict()

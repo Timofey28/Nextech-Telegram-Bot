@@ -313,9 +313,6 @@ async def command_delete_client(update: Update, context: ContextTypes.DEFAULT_TY
 async def command_get_clients_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type == 'private':
         return
-    if DB_ADMIN_STATUS != Status_MAIN:
-        await context.bot.send_message(ADMIN_GROUP_ID, 'Сначала заверши предыдущее действие, нажав на одну из кнопок')
-        return
 
     clients_data = db.get_clients_data()
     if clients_data is None:
@@ -367,9 +364,6 @@ async def command_delete_business_direction(update: Update, context: ContextType
 async def command_show_business_directions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type == 'private':
         return
-    if DB_ADMIN_STATUS != Status_MAIN:
-        await context.bot.send_message(ADMIN_GROUP_ID, 'Сначала заверши предыдущее действие, нажав на одну из кнопок')
-        return
 
     business_directions = db.get_business_directions('all')
     if business_directions is None:
@@ -402,6 +396,23 @@ async def command_delete_sent_message(update: Update, context: ContextTypes.DEFA
         CALLBACK_DATA[f'{tg_id},{message_id}'] = f'{name} {surname}'
     buttons.append([InlineKeyboardButton("Ни у кого не надо", callback_data="отмена")])
     await context.bot.send_message(ADMIN_GROUP_ID, 'У кого из них удалить последнее сообщение?', reply_markup=InlineKeyboardMarkup(buttons))
+
+
+async def command_check_last_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.chat.type == 'private':
+        return
+
+    last_message = db.get_last_sent_messages(latest_one=True)
+    if last_message is None:
+        await context.bot.send_message(ADMIN_GROUP_ID, 'Мы либо пока не отправляли ничего клиентам, либо все сообщения удалили)')
+        return
+    tg_id, message_id, name, surname, phone_number, sending_datetime = last_message
+    await context.bot.send_message(ADMIN_GROUP_ID, f'Последнее сообщение мы отправили клиенту по имени {name} {surname}, {sending_datetime.strftime("%d.%m.%y в %H:%M")}. Пересылаю его сюда ⬇️')
+    try:
+        await context.bot.forward_message(ADMIN_GROUP_ID, tg_id, message_id)
+    except Exception as e:
+        logging.error(str(e))
+        await context.bot.send_message(ADMIN_GROUP_ID, f'Что-то пошло не так...\n{str(e)}')
 
 
 async def error(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -471,6 +482,7 @@ def run_bot():
     app.add_handler(CommandHandler('delete_business_direction', command_delete_business_direction))
     app.add_handler(CommandHandler('show_business_directions', command_show_business_directions))
     app.add_handler(CommandHandler('delete_sent_message', command_delete_sent_message))
+    app.add_handler(CommandHandler('check_last_message', command_check_last_message))
 
     # Messages
     app.add_handler(MessageHandler(filters.TEXT, handle_message))
@@ -568,8 +580,9 @@ if __name__ == '__main__':
         ('delete_business_direction', 'Удалить направление бизнеса'),
         ('show_business_directions', 'Показать текущие направления бизнеса'),
         ('delete_sent_message', 'Удалить отправленное сообщение'),
+        ('check_last_message', 'Посмотреть последнее отправленное сообщение')
     ]
     bot_commands_chats = [
-        ('start', 'Начать монолог')
+        ('start', 'Узнать свой статус')
     ]
     run_bot()
