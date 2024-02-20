@@ -23,7 +23,6 @@ from telegram.ext import (
     ContextTypes,
     ChatMemberHandler,
     CallbackQueryHandler,
-    JobQueue,
     CallbackContext,
     Defaults,
 )
@@ -31,7 +30,7 @@ import logging
 import pandas as pd
 import openpyxl as xl
 from openpyxl.styles import Alignment, GradientFill
-from datetime import time
+from datetime import time, datetime
 import pytz
 
 
@@ -128,7 +127,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global CALLBACK_DATA
+    global CALLBACK_DATA, CURRENT_OFFSET, CURRENT_DEBT
     query = update.callback_query
 
     if ACCOUNTANT_GROUP_STATUS == Status_PRESSING_BUSINESS_DIRECTION_TO_DELETE_ONE:
@@ -236,12 +235,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             set_group_status('accountant', Status_MAIN)
         else:
             assert query.data == "пропустить" or query.data == "оплачено"
-            global CURRENT_OFFSET
             if query.data == "пропустить":
                 CURRENT_OFFSET += 1
                 await context.bot.send_message(GROUP_ID, 'Пока пропускаю, но мы вернемся к этому долгу в конце)')
             else:
-                global CURRENT_DEBT
                 db.mark_shift_as_paid(CURRENT_DEBT['date'], CURRENT_DEBT['phone_number'], CURRENT_DEBT['act_number'])
                 await context.bot.send_message(GROUP_ID, 'Кайф 🔥')
 
@@ -270,6 +267,30 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 barcode, name, tariff, amount = product
                 msg += f'\n{product_no}) {barcode}, "{name}"  ->  {tariff}₽ ✖ {amount} шт.'
                 product_no += 1
+            await context.bot.send_message(GROUP_ID, msg, reply_markup=InlineKeyboardMarkup(PAY_SALARIES_INLINE_KEYBOARD))
+
+    elif ACCOUNTANT_GROUP_STATUS == Status_PRESSING_BUTTON_TO_DECIDE_WHETHER_TO_PAY_DEBTS:
+        GROUP_ID = ACCOUNTANT_GROUP_ID
+        assert query.data == "не сейчас" or query.data == "оплатить"
+        if query.data == "не сейчас":
+            await context.bot.send_message(GROUP_ID, 'Хорошо, но не откладывай это надолго 😉')
+            set_group_status('accountant', Status_MAIN)
+        else:
+            CURRENT_OFFSET = 0
+            set_group_status('accountant', Status_PRESSING_BUTTON_WHILE_PAYING_SALARIES)
+            general_info, specific_info = db.get_next_debt_to_pay()
+            date, first_last_name, phone_number, act_number, debt = general_info
+            CURRENT_DEBT = {'date': date, 'phone_number': phone_number, 'act_number': act_number}
+            debt = f"{debt:_}".replace('_', '.') + ",00 ₽"
+            msg = f'Дата задолженности: {date.strftime("%d.%m.%Y")}\nАкт: {act_number}\nСотрудник: {first_last_name}\n' + \
+                  f'Телефон: {prettify_phone_number(phone_number)}\nНеобходимо заплатить: {debt}'
+            msg += f'\n\nУпакованные товары:'
+            product_no = 1
+            for product in specific_info:
+                barcode, name, tariff, amount = product
+                msg += f'\n{product_no}) {barcode}, "{name}"  ->  {tariff}₽ ✖ {amount} шт.'
+                product_no += 1
+            await context.bot.send_message(GROUP_ID, 'Начнем с начала ⬇️')
             await context.bot.send_message(GROUP_ID, msg, reply_markup=InlineKeyboardMarkup(PAY_SALARIES_INLINE_KEYBOARD))
 
 
@@ -311,28 +332,44 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif chat_id == ADMIN_GROUP_ID:
         GROUP_ID = ADMIN_GROUP_ID
-        file_id = update.message.document.file_id
+        if update.message.document.file_name[-5:] != '.xlsx':
+            await context.bot.send_message(GROUP_ID, 'Ты прикалываешься? У файла должно быть расширение ".xlsx" 🤦‍♂️')
+            return
+        try:
+            file_path = update.message.document.file_name
+            datetime.strptime(file_path[:file_path.rfind('.')], '%d%m%y').date()
+        except ValueError:
+            await context.bot.send_message(GROUP_ID, 'Некорректное название файла. Должна быть существующая дата в формате "ддммгг"')
+            return
         CURRENT_FILE = f'File/{update.message.document.file_name}'
+        file_id = update.message.document.file_id
         tgFileInstance = await context.bot.get_file(file_id)
         await tgFileInstance.download_to_drive(CURRENT_FILE)
-        try:
-            db.write_payments_data(CURRENT_FILE)
-            unpaid_shifts = db.get_unpaid_shifts()
-            if unpaid_shifts is None:
-                await context.bot.send_message(GROUP_ID, 'Не нашел в файле новых задолженностей, ты проверял меня, да? 😎')
-            else:
-                msg = f'У нас появились новые задолженности. Вот все они в одном списке 👇'
-                for day in unpaid_shifts.keys():
-                    msg += f'\n\nЗа {day.strftime("%d.%m.%Y")}:'
-                    no = 1
-                    for salary in unpaid_shifts[day]:
-                        msg += f"\n{no}) {salary['person']} -> " + f"{salary['debt']:_}".replace('_', '.') + ',00 ₽'
-                        no += 1
-                await context.bot.send_message(ACCOUNTANT_GROUP_ID, msg)
-                await context.bot.send_message(GROUP_ID, 'Записал все в базу данных и написал в чат бухгалтера ✅')
-        except:
-            await context.bot.send_message(GROUP_ID, 'Не удалось прочитать файл (', reply_markup=ReplyKeyboardRemove())
+
+        error_log = db.write_payments_data(CURRENT_FILE)
         os.remove(CURRENT_FILE)
+        if error_log:
+            await context.bot.send_message(GROUP_ID, f'Не удалось прочитать файл (\n\n{error_log}')
+            return
+        unpaid_shifts = db.get_unpaid_shifts()
+        if unpaid_shifts is None:
+            await context.bot.send_message(GROUP_ID, 'Не нашел новых задолженностей в файле, ты проверял меня, да? 😎')
+        else:
+            msg = f'У нас появились новые задолженности. Вот все они в одном списке 👇'
+            for day in unpaid_shifts.keys():
+                msg += f'\n\nЗа {day.strftime("%d.%m.%Y")}:'
+                no = 1
+                for salary in unpaid_shifts[day]:
+                    msg += f"\n{no}) {salary['person']} -> " + f"{salary['debt']:_}".replace('_', '.') + ',00 ₽'
+                    no += 1
+            if ACCOUNTANT_GROUP_STATUS in [Status_MAIN, Status_PRESSING_BUTTON_TO_DECIDE_WHETHER_TO_PAY_DEBTS]:
+                set_group_status('accountant', Status_PRESSING_BUTTON_TO_DECIDE_WHETHER_TO_PAY_DEBTS)
+                buttons = [[InlineKeyboardButton('Не сейчас 🧑‍💻', callback_data='не сейчас'),
+                            InlineKeyboardButton('Оплатить 🏃‍♂️', callback_data='оплатить')]]
+                await context.bot.send_message(ACCOUNTANT_GROUP_ID, msg, reply_markup=InlineKeyboardMarkup(buttons))
+            else:
+                await context.bot.send_message(ACCOUNTANT_GROUP_ID, msg)
+            await context.bot.send_message(GROUP_ID, 'Записал все в базу данных и написал в чат бухгалтера ✅')
 
 
 async def command_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -727,7 +764,8 @@ def set_group_status(group: str, status: str):
                status == Status_PRESSING_BUSINESS_DIRECTION_TO_DELETE_CLIENT or \
                status == Status_PRESSING_CLIENT_TO_DELETE_ONE or \
                status == Status_PRESSING_CLIENT_TO_DELETE_LAST_MESSAGE or \
-               status == Status_PRESSING_BUTTON_WHILE_PAYING_SALARIES
+               status == Status_PRESSING_BUTTON_WHILE_PAYING_SALARIES or \
+               status == Status_PRESSING_BUTTON_TO_DECIDE_WHETHER_TO_PAY_DEBTS
         ACCOUNTANT_GROUP_STATUS = status
 
 
@@ -764,6 +802,7 @@ if __name__ == '__main__':
     Status_PRESSING_CLIENT_TO_DELETE_ONE = 'pressing_client_to_delete_one'
     Status_PRESSING_CLIENT_TO_DELETE_LAST_MESSAGE = 'pressing_client_to_delete_last_message'
     Status_PRESSING_BUTTON_WHILE_PAYING_SALARIES = 'pressing_button_while_paying_salaries'
+    Status_PRESSING_BUTTON_TO_DECIDE_WHETHER_TO_PAY_DEBTS = 'pressing_button_to_decide_whether_to_pay_debts'
 
     # Глобальные переменные
     ADMIN_GROUP_STATUS = ACCOUNTANT_GROUP_STATUS = Status_MAIN

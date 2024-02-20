@@ -1,6 +1,8 @@
 import psycopg2
 import pandas as pd
-from datetime import date
+from datetime import date, datetime
+import math
+
 
 class Database:
     def __init__(self, db_dbname: str, db_host: str, db_user: str, db_password: str):
@@ -56,7 +58,8 @@ class Database:
         assert result != []
         return result[0][0]
 
-    def add_client(self, surname: str, name: str, patronymic: str, sex: str, tg_id: int, inn: str, business_direction_id: int, phone_number: str, email: str) -> bool:
+    def add_client(self, surname: str, name: str, patronymic: str, sex: str, tg_id: int, inn: str,
+                   business_direction_id: int, phone_number: str, email: str) -> bool:
         assert phone_number.isdigit()
         query = f"INSERT INTO clients (surname, name, patronymic, sex, tg_id, inn, business_direction_id, phone_number, email) " + \
                 f"VALUES('{surname}', '{name}', '{patronymic}', '{sex}', {tg_id}, '{inn}', {business_direction_id}, '{phone_number}', '{email}');"
@@ -164,42 +167,59 @@ class Database:
         return phone_number
 
     def write_payments_data(self, payments_file_path: str):
-        df = pd.read_excel(payments_file_path, header=None)
-
-        shift_date = df.iloc[0, 1].date()
-        people = df.iloc[:2, 4:].copy()
-        employee_ids = []
-        act_numbers = []
-        for i in list(people.columns):
-            phone_number = self.__normalize_phone_number(str(people[i][0]))
-            first_last_name = people[i][1]
-            if not self.__employee_exists(phone_number, employee_ids):
-                query = f"INSERT INTO employees (first_last_name, phone_number) VALUES('{first_last_name}', '{phone_number}') RETURNING id;"
+        try:
+            df = pd.read_excel(payments_file_path, header=None)
+            shift_date = datetime.strptime(payments_file_path[payments_file_path.find('/') + 1:payments_file_path.rfind('.')], '%d%m%y').date()
+            people = df.iloc[:2, 4:].copy()
+            people.dropna(axis='columns', how='all', inplace=True)
+            if people.empty:
+                error_log = 'Нет ни людей, ни телефонов 😔'
+                return error_log
+            people_without_phone_numbers = []
+            for i in range(people.shape[0]):
+                if math.isnan(people.iloc[0, i]):
+                    people_without_phone_numbers.append(people.iloc[1, i])
+            if people_without_phone_numbers:
+                if len(people_without_phone_numbers) == 1:
+                    return f'Нет номера телефона у сотрудника по имени {people_without_phone_numbers[0]}'
+                else:
+                    return f"Нет номеров телефона у следующих сотрудников: {', '.join(people_without_phone_numbers)}"
+            employee_ids = []
+            act_numbers = []
+            for i in list(people.columns):
+                phone_number = self.__normalize_phone_number(str(people[i][0]))
+                first_last_name = people[i][1]
+                if not self.__employee_exists(phone_number, employee_ids):
+                    query = f"INSERT INTO employees (first_last_name, phone_number) VALUES('{first_last_name}', '{phone_number}') RETURNING id;"
+                    self.curr.execute(query)
+                    employee_ids.append(self.curr.fetchall()[0][0])
+                query = f"SELECT MAX(act_number) FROM shifts WHERE employee_id = {employee_ids[-1]} AND date = '{str(shift_date)}';"
                 self.curr.execute(query)
-                employee_ids.append(self.curr.fetchall()[0][0])
-            query = f"SELECT act_number FROM shifts WHERE employee_id = {employee_ids[-1]} AND date = '{str(shift_date)}';"
-            self.curr.execute(query)
-            result = self.curr.fetchall()
-            if result:
-                act_number = result[0][0]
-                act_numbers.append(act_number + 1)
-            else:
-                act_numbers.append(1)
+                result = self.curr.fetchall()[0][0]
+                if result:
+                    act_numbers.append(result + 1)
+                else:
+                    act_numbers.append(1)
 
-        goods = df.iloc[3:, :].copy()
-        for i in range(4, 4 + len(employee_ids)):
-            goods[i].fillna(0, inplace=True)
-        for row in range(goods.shape[0]):
-            good_info = list(goods.iloc[row, :][0:3])
-            product_barcode = str(good_info[0])
-            product_name = str(good_info[2])
-            tariff_price = int(good_info[1])
-            for i in range(len(employee_ids)):
-                query = f"INSERT INTO shifts (employee_id, product_barcode, product_name, tariff_price, amount, date, act_number) " + \
-                        f"VALUES({employee_ids[i]}, '{product_barcode}', '{product_name}', {tariff_price}, {int(goods.iloc[row, 4 + i])}, '{shift_date}', {act_numbers[i]});"
-                self.curr.execute(query)
+            goods = df.iloc[3:, :4 + len(employee_ids)].copy()
+            for i in range(4, 4 + len(employee_ids)):
+                goods[i].fillna(0, inplace=True)
+            for row in range(goods.shape[0]):
+                good_info = list(goods.iloc[row, :][0:3])
+                if math.isnan(good_info[0]) and math.isnan(good_info[1]) and math.isnan(good_info[2]):
+                    break
+                product_barcode = str(good_info[0]) if good_info[0] else ''
+                product_name = str(good_info[2])
+                tariff_price = int(good_info[1])
+                for i in range(len(employee_ids)):
+                    query = f"INSERT INTO shifts (employee_id, product_barcode, product_name, tariff_price, amount, date, act_number) " + \
+                            f"VALUES({employee_ids[i]}, '{product_barcode}', '{product_name}', {tariff_price}, {int(goods.iloc[row, 4 + i])}, '{shift_date}', {act_numbers[i]});"
+                    self.curr.execute(query)
 
-        self.connection.commit()
+            self.connection.commit()
+            return ''
+        except Exception as e:
+            return str(e)
 
     def __employee_exists(self, phone_number: str, employee_ids: list) -> bool:
         query = f"SELECT id FROM employees WHERE phone_number = '{phone_number}';"
@@ -224,7 +244,9 @@ class Database:
                     result[debt[0]].append({'person': debt[1], 'debt': debt[2]})
                 else:
                     if debt[3] == 2:
-                        result[debt[0]] = [{'person': f"{x['person']} (1 акт)", 'debt': x['debt']} if x['person'] == debt[1] else x for x in result[debt[0]]]
+                        result[debt[0]] = [
+                            {'person': f"{x['person']} (1 акт)", 'debt': x['debt']} if x['person'] == debt[1] else x for
+                            x in result[debt[0]]]
                     result[debt[0]].append({'person': f'{debt[1]} ({debt[3]} акт)', 'debt': debt[2]})
         else:
             result = None
