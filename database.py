@@ -1,4 +1,6 @@
 import psycopg2
+import pandas as pd
+from datetime import date
 
 class Database:
     def __init__(self, db_dbname: str, db_host: str, db_user: str, db_password: str):
@@ -149,5 +151,118 @@ class Database:
 
     def delete_sent_message_info(self, tg_id: int, message_id: int):
         query = f"DELETE FROM sent_messages WHERE tg_id = {tg_id} AND message_id = {message_id};"
+        self.curr.execute(query)
+        self.connection.commit()
+
+    @staticmethod
+    def __normalize_phone_number(phone_number: str) -> str:
+        for char in phone_number:
+            if not char.isdigit():
+                phone_number = phone_number.replace(char, '')
+        if phone_number[0] == '7':
+            phone_number = '8' + phone_number[1:]
+        return phone_number
+
+    def write_payments_data(self, payments_file_path: str):
+        df = pd.read_excel(payments_file_path, header=None)
+
+        shift_date = df.iloc[0, 1].date()
+        people = df.iloc[:2, 4:].copy()
+        employee_ids = []
+        act_numbers = []
+        for i in list(people.columns):
+            phone_number = self.__normalize_phone_number(str(people[i][0]))
+            first_last_name = people[i][1]
+            if not self.__employee_exists(phone_number, employee_ids):
+                query = f"INSERT INTO employees (first_last_name, phone_number) VALUES('{first_last_name}', '{phone_number}') RETURNING id;"
+                self.curr.execute(query)
+                employee_ids.append(self.curr.fetchall()[0][0])
+            query = f"SELECT act_number FROM shifts WHERE employee_id = {employee_ids[-1]} AND date = '{str(shift_date)}';"
+            self.curr.execute(query)
+            result = self.curr.fetchall()
+            if result:
+                act_number = result[0][0]
+                act_numbers.append(act_number + 1)
+            else:
+                act_numbers.append(1)
+
+        goods = df.iloc[3:, :].copy()
+        for i in range(4, 4 + len(employee_ids)):
+            goods[i].fillna(0, inplace=True)
+        for row in range(goods.shape[0]):
+            good_info = list(goods.iloc[row, :][0:3])
+            product_barcode = str(good_info[0])
+            product_name = str(good_info[2])
+            tariff_price = int(good_info[1])
+            for i in range(len(employee_ids)):
+                query = f"INSERT INTO shifts (employee_id, product_barcode, product_name, tariff_price, amount, date, act_number) " + \
+                        f"VALUES({employee_ids[i]}, '{product_barcode}', '{product_name}', {tariff_price}, {int(goods.iloc[row, 4 + i])}, '{shift_date}', {act_numbers[i]});"
+                self.curr.execute(query)
+
+        self.connection.commit()
+
+    def __employee_exists(self, phone_number: str, employee_ids: list) -> bool:
+        query = f"SELECT id FROM employees WHERE phone_number = '{phone_number}';"
+        self.curr.execute(query)
+        result = self.curr.fetchall()
+        if result:
+            employee_ids.append(result[0][0])
+            return True
+        return False
+
+    def get_unpaid_shifts(self):
+        query = "SELECT date, first_last_name, SUM(tariff_price * amount), act_number FROM shifts, employees e " + \
+                "WHERE employee_id = e.id AND was_paid = FALSE GROUP BY first_last_name, date, act_number ORDER BY date, first_last_name;"
+        self.curr.execute(query)
+        debts = self.curr.fetchall()
+        if debts:
+            result = {}
+            for debt in debts:
+                if debt[0] not in result:
+                    result[debt[0]] = []
+                if debt[3] == 1:
+                    result[debt[0]].append({'person': debt[1], 'debt': debt[2]})
+                else:
+                    if debt[3] == 2:
+                        result[debt[0]] = [{'person': f"{x['person']} (1 акт)", 'debt': x['debt']} if x['person'] == debt[1] else x for x in result[debt[0]]]
+                    result[debt[0]].append({'person': f'{debt[1]} ({debt[3]} акт)', 'debt': debt[2]})
+        else:
+            result = None
+        return result
+
+    def get_all_shifts(self):
+        query = "SELECT date, first_last_name, phone_number, product_barcode, product_name, tariff_price, amount, act_number, was_paid " + \
+                "FROM shifts, employees e WHERE employee_id = e.id ORDER BY date, first_last_name;"
+        self.curr.execute(query)
+        result = self.curr.fetchall()
+        if result:
+            result = list(map(lambda x: list(x), result))
+        else:
+            result = None
+        return result
+
+    def get_next_debt_to_pay(self, offset=0):
+        query = "SELECT date, first_last_name, act_number, SUM(tariff_price * amount) FROM shifts, employees e " + \
+                "WHERE employee_id = e.id AND was_paid = FALSE GROUP BY first_last_name, date, act_number " + \
+                f"ORDER BY date, first_last_name, act_number OFFSET {offset} LIMIT 1;"
+        self.curr.execute(query)
+        general_info = self.curr.fetchall()
+        if general_info:
+            general_info = list(general_info[0])
+        else:
+            return None, None
+
+        query = "SELECT phone_number, product_barcode, product_name, tariff_price, amount FROM shifts " + \
+                "JOIN employees e ON employee_id = e.id " + \
+                f"WHERE date = '{general_info[0]}' AND first_last_name = '{general_info[1]}' AND act_number = {general_info[2]};"
+        self.curr.execute(query)
+        specific_info = self.curr.fetchall()
+        general_info.insert(2, specific_info[0][0])
+        specific_info = list(map(lambda x: list(x[1:]), specific_info))
+        return general_info, specific_info
+
+    def mark_shift_as_paid(self, shift_date: date, phone_number: str, act_number: int):
+        query = f"UPDATE shifts SET was_paid = TRUE WHERE date = '{shift_date}' AND act_number = {act_number} AND " + \
+                f"employee_id = (SELECT DISTINCT employee_id FROM shifts JOIN employees e ON employee_id = e.id WHERE phone_number = '{phone_number}');"
         self.curr.execute(query)
         self.connection.commit()
