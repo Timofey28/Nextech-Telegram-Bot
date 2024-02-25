@@ -1,7 +1,6 @@
 import psycopg2
 import pandas as pd
 from datetime import date, datetime
-import math
 
 
 class Database:
@@ -169,28 +168,38 @@ class Database:
     def write_payments_data(self, payments_file_path: str):
         try:
             df = pd.read_excel(payments_file_path, header=None)
-            shift_date = datetime.strptime(payments_file_path[payments_file_path.find('/') + 1:payments_file_path.rfind('.')], '%d%m%y').date()
-            people = df.iloc[:2, 4:].copy()
+            shift_date = datetime.strptime(
+                payments_file_path[payments_file_path.find('/') + 1:payments_file_path.rfind('.')], '%d%m%y').date()
+            people = df.iloc[:3, 4:].copy()
             people.dropna(axis='columns', how='all', inplace=True)
             if people.empty:
                 error_log = 'Нет ни людей, ни телефонов 😔'
                 return error_log
-            people_without_phone_numbers = []
-            for i in range(people.shape[0]):
-                if math.isnan(people.iloc[0, i]):
-                    people_without_phone_numbers.append(people.iloc[1, i])
+            people_without_phone_numbers, people_without_banks = [], []
+            for i in range(people.shape[1]):
+                if type(people.iloc[0, i]) is float:
+                    people_without_phone_numbers.append(people.iloc[2, i])
+                if type(people.iloc[1, i]) is float:
+                    people_without_banks.append(people.iloc[2, i])
             if people_without_phone_numbers:
                 if len(people_without_phone_numbers) == 1:
                     return f'Нет номера телефона у сотрудника по имени {people_without_phone_numbers[0]}'
                 else:
                     return f"Нет номеров телефона у следующих сотрудников: {', '.join(people_without_phone_numbers)}"
+            if people_without_banks:
+                if len(people_without_banks) == 1:
+                    return f'Нет названия банка у сотрудника по имени {people_without_banks[0]}'
+                else:
+                    return f"Нет названия банка у следующих сотрудников: {', '.join(people_without_banks)}"
+
             employee_ids = []
             act_numbers = []
             for i in list(people.columns):
                 phone_number = self.__normalize_phone_number(str(people[i][0]))
-                first_last_name = people[i][1]
+                bank = people[i][1]
+                first_last_name = people[i][2]
                 if not self.__employee_exists(phone_number, employee_ids):
-                    query = f"INSERT INTO employees (first_last_name, phone_number) VALUES('{first_last_name}', '{phone_number}') RETURNING id;"
+                    query = f"INSERT INTO employees (first_last_name, phone_number, bank) VALUES('{first_last_name}', '{phone_number}', '{bank}') RETURNING id;"
                     self.curr.execute(query)
                     employee_ids.append(self.curr.fetchall()[0][0])
                 query = f"SELECT MAX(act_number) FROM shifts WHERE employee_id = {employee_ids[-1]} AND date = '{str(shift_date)}';"
@@ -201,12 +210,12 @@ class Database:
                 else:
                     act_numbers.append(1)
 
-            goods = df.iloc[3:, :4 + len(employee_ids)].copy()
+            goods = df.iloc[4:, :4 + len(employee_ids)].copy()
             for i in range(4, 4 + len(employee_ids)):
                 goods[i].fillna(0, inplace=True)
             for row in range(goods.shape[0]):
                 good_info = list(goods.iloc[row, :][0:3])
-                if math.isnan(good_info[0]) and math.isnan(good_info[1]) and math.isnan(good_info[2]):
+                if type(good_info[0]) is float and type(good_info[1]) is float and type(good_info[2]) is float:
                     break
                 product_barcode = str(good_info[0]) if good_info[0] else ''
                 product_name = str(good_info[2])
@@ -274,13 +283,14 @@ class Database:
         else:
             return None, None
 
-        query = "SELECT phone_number, product_barcode, product_name, tariff_price, amount FROM shifts " + \
+        query = "SELECT phone_number, bank, product_barcode, product_name, tariff_price, amount FROM shifts " + \
                 "JOIN employees e ON employee_id = e.id " + \
                 f"WHERE date = '{general_info[0]}' AND first_last_name = '{general_info[1]}' AND act_number = {general_info[2]};"
         self.curr.execute(query)
         specific_info = self.curr.fetchall()
+        general_info.insert(3, specific_info[0][1])
         general_info.insert(2, specific_info[0][0])
-        specific_info = list(map(lambda x: list(x[1:]), specific_info))
+        specific_info = list(map(lambda x: list(x[2:]), specific_info))
         return general_info, specific_info
 
     def mark_shift_as_paid(self, shift_date: date, phone_number: str, act_number: int):

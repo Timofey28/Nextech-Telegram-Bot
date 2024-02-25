@@ -256,11 +256,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     set_group_status('accountant', Status_MAIN)
                     return
 
-            date, first_last_name, phone_number, act_number, debt = general_info
+            date, first_last_name, phone_number, act_number, bank, debt = general_info
             CURRENT_DEBT = {'date': date, 'phone_number': phone_number, 'act_number': act_number}
             debt = f"{debt:_}".replace('_', '.') + ",00 ₽"
             msg = f'Дата задолженности: {date.strftime("%d.%m.%Y")}\nАкт: {act_number}\nСотрудник: {first_last_name}\n' + \
-                  f'Телефон: {prettify_phone_number(phone_number)}\nНеобходимо заплатить: {debt}'
+                  f'Телефон: {prettify_phone_number(phone_number)}\nБанк: {bank.capitalize()}\nНеобходимо заплатить: {debt}'
             msg += f'\n\nУпакованные товары:'
             product_no = 1
             for product in specific_info:
@@ -269,7 +269,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 product_no += 1
             await context.bot.send_message(GROUP_ID, msg, reply_markup=InlineKeyboardMarkup(PAY_SALARIES_INLINE_KEYBOARD))
 
-    elif ACCOUNTANT_GROUP_STATUS == Status_PRESSING_BUTTON_TO_DECIDE_WHETHER_TO_PAY_DEBTS:
+    elif ACCOUNTANT_GROUP_STATUS == Status_PRESSING_BUTTON_TO_DECIDE_WHETHER_TO_PAY_SALARIES:
         GROUP_ID = ACCOUNTANT_GROUP_ID
         assert query.data == "не сейчас" or query.data == "оплатить"
         if query.data == "не сейчас":
@@ -279,11 +279,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             CURRENT_OFFSET = 0
             set_group_status('accountant', Status_PRESSING_BUTTON_WHILE_PAYING_SALARIES)
             general_info, specific_info = db.get_next_debt_to_pay()
-            date, first_last_name, phone_number, act_number, debt = general_info
+            date, first_last_name, phone_number, act_number, bank, debt = general_info
             CURRENT_DEBT = {'date': date, 'phone_number': phone_number, 'act_number': act_number}
             debt = f"{debt:_}".replace('_', '.') + ",00 ₽"
             msg = f'Дата задолженности: {date.strftime("%d.%m.%Y")}\nАкт: {act_number}\nСотрудник: {first_last_name}\n' + \
-                  f'Телефон: {prettify_phone_number(phone_number)}\nНеобходимо заплатить: {debt}'
+                  f'Телефон: {prettify_phone_number(phone_number)}\nБанк: {bank.capitalize()}\nНеобходимо заплатить: {debt}'
             msg += f'\n\nУпакованные товары:'
             product_no = 1
             for product in specific_info:
@@ -362,8 +362,8 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 for salary in unpaid_shifts[day]:
                     msg += f"\n{no}) {salary['person']} -> " + f"{salary['debt']:_}".replace('_', '.') + ',00 ₽'
                     no += 1
-            if ACCOUNTANT_GROUP_STATUS in [Status_MAIN, Status_PRESSING_BUTTON_TO_DECIDE_WHETHER_TO_PAY_DEBTS]:
-                set_group_status('accountant', Status_PRESSING_BUTTON_TO_DECIDE_WHETHER_TO_PAY_DEBTS)
+            if ACCOUNTANT_GROUP_STATUS in [Status_MAIN, Status_PRESSING_BUTTON_TO_DECIDE_WHETHER_TO_PAY_SALARIES]:
+                set_group_status('accountant', Status_PRESSING_BUTTON_TO_DECIDE_WHETHER_TO_PAY_SALARIES)
                 buttons = [[InlineKeyboardButton('Не сейчас 🧑‍💻', callback_data='не сейчас'),
                             InlineKeyboardButton('Оплатить 🏃‍♂️', callback_data='оплатить')]]
                 await context.bot.send_message(ACCOUNTANT_GROUP_ID, msg, reply_markup=InlineKeyboardMarkup(buttons))
@@ -571,11 +571,11 @@ async def command_pay_salaries(update: Update, context: ContextTypes.DEFAULT_TYP
     CURRENT_OFFSET = 0
     set_group_status('accountant', Status_PRESSING_BUTTON_WHILE_PAYING_SALARIES)
     general_info, specific_info = db.get_next_debt_to_pay()
-    date, first_last_name, phone_number, act_number, debt = general_info
+    date, first_last_name, phone_number, act_number, bank, debt = general_info
     CURRENT_DEBT = {'date': date, 'phone_number': phone_number, 'act_number': act_number}
     debt = f"{debt:_}".replace('_', '.') + ",00 ₽"
     msg = f'Дата задолженности: {date.strftime("%d.%m.%Y")}\nАкт: {act_number}\nСотрудник: {first_last_name}\n' + \
-          f'Телефон: {prettify_phone_number(phone_number)}\nНеобходимо заплатить: {debt}'
+          f'Телефон: {prettify_phone_number(phone_number)}\nБанк: {bank.capitalize()}\nНеобходимо заплатить: {debt}'
     msg += f'\n\nУпакованные товары:'
     product_no = 1
     for product in specific_info:
@@ -765,7 +765,7 @@ def set_group_status(group: str, status: str):
                status == Status_PRESSING_CLIENT_TO_DELETE_ONE or \
                status == Status_PRESSING_CLIENT_TO_DELETE_LAST_MESSAGE or \
                status == Status_PRESSING_BUTTON_WHILE_PAYING_SALARIES or \
-               status == Status_PRESSING_BUTTON_TO_DECIDE_WHETHER_TO_PAY_DEBTS
+               status == Status_PRESSING_BUTTON_TO_DECIDE_WHETHER_TO_PAY_SALARIES
         ACCOUNTANT_GROUP_STATUS = status
 
 
@@ -802,7 +802,7 @@ if __name__ == '__main__':
     Status_PRESSING_CLIENT_TO_DELETE_ONE = 'pressing_client_to_delete_one'
     Status_PRESSING_CLIENT_TO_DELETE_LAST_MESSAGE = 'pressing_client_to_delete_last_message'
     Status_PRESSING_BUTTON_WHILE_PAYING_SALARIES = 'pressing_button_while_paying_salaries'
-    Status_PRESSING_BUTTON_TO_DECIDE_WHETHER_TO_PAY_DEBTS = 'pressing_button_to_decide_whether_to_pay_debts'
+    Status_PRESSING_BUTTON_TO_DECIDE_WHETHER_TO_PAY_SALARIES = 'pressing_button_to_decide_whether_to_pay_debts'
 
     # Глобальные переменные
     ADMIN_GROUP_STATUS = ACCOUNTANT_GROUP_STATUS = Status_MAIN
