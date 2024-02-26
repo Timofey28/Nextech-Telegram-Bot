@@ -384,6 +384,10 @@ async def command_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(ADMIN_GROUP_ID, msg)
         else:
             await update.message.reply_text('Приветствую! Если ты оформил подписку, то тебя пока не добавили в базу. Как только добавят, я сразу сообщу!')
+    elif update.effective_chat.id == ACCOUNTANT_GROUP_ID:
+        if not context.job_queue.jobs():
+            context.job_queue.run_daily(debt_reminder, time(17, 0, 0, 0))
+            await context.bot.send_message(ACCOUNTANT_GROUP_ID, '👌')
 
 
 async def command_add_client(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -679,7 +683,6 @@ async def track_chats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 with open("accountant_group_id.txt", "w") as f:
                     f.write(str(ACCOUNTANT_GROUP_ID))
                 await context.bot.set_my_commands(commands=bot_commands_accountant, scope=BotCommandScopeChat(chat.id))
-                context.job_queue.run_daily(debt_reminder, time(17, 0, 0, 0))
             else:
                 logging.warning('Бот добавлен в группу, в названии которой нет ни слова "админ", ни слова "бухгалтер"')
             await context.bot.set_my_commands(commands=bot_commands_client, scope=BotCommandScopeAllPrivateChats())
@@ -774,6 +777,7 @@ if __name__ == '__main__':
     logging.basicConfig(
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         filename='info.log',
+        filemode='w',
         level=logging.INFO
     )
     logging.getLogger("httpx").setLevel(logging.WARNING)
