@@ -351,11 +351,12 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if error_log:
             await context.bot.send_message(GROUP_ID, f'Не удалось прочитать файл (\n\n{error_log}')
             return
-        unpaid_shifts = db.get_unpaid_shifts()
+        unpaid_shifts, total_debt = db.get_unpaid_shifts()
         if unpaid_shifts is None:
             await context.bot.send_message(GROUP_ID, 'Не нашел новых задолженностей в файле, ты проверял меня, да? 😎')
         else:
             msg = f'У нас появились новые задолженности. Вот все они в одном списке 👇'
+            msg += f'\n\nОбщая сумма задолженностей: ' + f'{total_debt:_}'.replace('_', '.') + ',00 ₽'
             for day in unpaid_shifts.keys():
                 msg += f'\n\nЗа {day.strftime("%d.%m.%Y")}:'
                 no = 1
@@ -558,11 +559,12 @@ async def command_pay_salaries(update: Update, context: ContextTypes.DEFAULT_TYP
         await context.bot.send_message(GROUP_ID, 'Сначала заверши предыдущее действие, нажав на одну из кнопок')
         return
 
-    unpaid_shifts = db.get_unpaid_shifts()
+    unpaid_shifts, total_debt = db.get_unpaid_shifts()
     if unpaid_shifts is None:
         await context.bot.send_message(GROUP_ID, 'Никаких задолженностей на текущий момент нет!')
         return
     msg = f'Отличная идея! Вот список задолженностей на данный момент 👇'
+    msg += f'\n\nОбщая сумма задолженностей: ' + f'{total_debt:_}'.replace('_', '.') + ',00 ₽'
     for day in unpaid_shifts.keys():
         msg += f'\n\nЗа {day.strftime("%d.%m.%Y")}:'
         no = 1
@@ -701,11 +703,12 @@ def read_group_ids():
 
 
 async def debt_reminder(context: CallbackContext):
-    unpaid_shifts = db.get_unpaid_shifts()
+    unpaid_shifts, total_debt = db.get_unpaid_shifts()
     if unpaid_shifts is None:
         await context.bot.send_message(ACCOUNTANT_GROUP_ID, 'Если кому-то интересно, то на данный момент никаких задолженностей у нас нет 🤓')
         return
     msg = 'Хочу напомнить, что на данный момент у нас есть некоторые задолженности перед работниками склада, было бы неплохо их погасить) 👇'
+    msg += f'\n\nОбщая сумма задолженностей: ' + f'{total_debt:_}'.replace('_', '.') + ',00 ₽'
     for day in unpaid_shifts.keys():
         msg += f'\n\nЗа {day.strftime("%d.%m.%Y")}:'
         no = 1

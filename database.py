@@ -244,22 +244,22 @@ class Database:
                 "WHERE employee_id = e.id AND was_paid = FALSE GROUP BY first_last_name, date, act_number ORDER BY date, first_last_name;"
         self.curr.execute(query)
         debts = self.curr.fetchall()
+        total_debt = 0
         if debts:
             result = {}
             for debt in debts:
+                total_debt += debt[2]
                 if debt[0] not in result:
                     result[debt[0]] = []
                 if debt[3] == 1:
                     result[debt[0]].append({'person': debt[1], 'debt': debt[2]})
                 else:
                     if debt[3] == 2:
-                        result[debt[0]] = [
-                            {'person': f"{x['person']} (1 акт)", 'debt': x['debt']} if x['person'] == debt[1] else x for
-                            x in result[debt[0]]]
+                        result[debt[0]] = [{'person': f"{x['person']} (1 акт)", 'debt': x['debt']} if x['person'] == debt[1] else x for x in result[debt[0]]]
                     result[debt[0]].append({'person': f'{debt[1]} ({debt[3]} акт)', 'debt': debt[2]})
         else:
             result = None
-        return result
+        return result, total_debt
 
     def get_all_shifts(self):
         query = "SELECT date, first_last_name, phone_number, product_barcode, product_name, tariff_price, amount, act_number, was_paid " + \
