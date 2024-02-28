@@ -260,7 +260,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             CURRENT_DEBT = {'date': date, 'phone_number': phone_number, 'act_number': act_number}
             debt = f"{debt:_}".replace('_', '.') + ",00 ₽"
             msg = f'Дата задолженности: {date.strftime("%d.%m.%Y")}\nАкт: {act_number}\nСотрудник: {first_last_name}\n' + \
-                  f'Телефон: {prettify_phone_number(phone_number)}\nБанк: {bank.capitalize()}\nНеобходимо заплатить: {debt}'
+                  f'Телефон: {phone_number}\nБанк: {bank.capitalize()}\nНеобходимо заплатить: {debt}'
             msg += f'\n\nУпакованные товары:'
             product_no = 1
             for product in specific_info:
@@ -283,7 +283,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             CURRENT_DEBT = {'date': date, 'phone_number': phone_number, 'act_number': act_number}
             debt = f"{debt:_}".replace('_', '.') + ",00 ₽"
             msg = f'Дата задолженности: {date.strftime("%d.%m.%Y")}\nАкт: {act_number}\nСотрудник: {first_last_name}\n' + \
-                  f'Телефон: {prettify_phone_number(phone_number)}\nБанк: {bank.capitalize()}\nНеобходимо заплатить: {debt}'
+                  f'Телефон: {phone_number}\nБанк: {bank.capitalize()}\nНеобходимо заплатить: {debt}'
             msg += f'\n\nУпакованные товары:'
             product_no = 1
             for product in specific_info:
@@ -579,7 +579,7 @@ async def command_pay_salaries(update: Update, context: ContextTypes.DEFAULT_TYP
     CURRENT_DEBT = {'date': date, 'phone_number': phone_number, 'act_number': act_number}
     debt = f"{debt:_}".replace('_', '.') + ",00 ₽"
     msg = f'Дата задолженности: {date.strftime("%d.%m.%Y")}\nАкт: {act_number}\nСотрудник: {first_last_name}\n' + \
-          f'Телефон: {prettify_phone_number(phone_number)}\nБанк: {bank.capitalize()}\nНеобходимо заплатить: {debt}'
+          f'Телефон: {phone_number}\nБанк: {bank.capitalize()}\nНеобходимо заплатить: {debt}'
     msg += f'\n\nУпакованные товары:'
     product_no = 1
     for product in specific_info:
