@@ -1,6 +1,6 @@
+from datetime import date, datetime
 import psycopg2
 import pandas as pd
-from datetime import date, datetime
 
 
 class Database:
@@ -221,9 +221,11 @@ class Database:
                 product_name = str(good_info[2])
                 tariff_price = int(good_info[1])
                 for i in range(len(employee_ids)):
-                    query = f"INSERT INTO shifts (employee_id, product_barcode, product_name, tariff_price, amount, date, act_number) " + \
-                            f"VALUES({employee_ids[i]}, '{product_barcode}', '{product_name}', {tariff_price}, {int(goods.iloc[row, 4 + i])}, '{shift_date}', {act_numbers[i]});"
-                    self.curr.execute(query)
+                    amount = int(goods.iloc[row, 4 + i])
+                    if amount > 0:
+                        query = f"INSERT INTO shifts (employee_id, product_barcode, product_name, tariff_price, amount, date, act_number) " + \
+                                f"VALUES({employee_ids[i]}, '{product_barcode}', '{product_name}', {tariff_price}, {amount}, '{shift_date}', {act_numbers[i]});"
+                        self.curr.execute(query)
 
             self.connection.commit()
             return ''
@@ -239,7 +241,18 @@ class Database:
             return True
         return False
 
-    def get_unpaid_shifts(self):
+    def get_all_shifts(self):
+        query = "SELECT date, first_last_name, phone_number, product_barcode, product_name, tariff_price, amount, act_number, was_paid " + \
+                "FROM shifts, employees e WHERE employee_id = e.id ORDER BY date, first_last_name;"
+        self.curr.execute(query)
+        result = self.curr.fetchall()
+        if result:
+            result = list(map(lambda x: list(x), result))
+        else:
+            result = None
+        return result
+
+    def get_unpaid_shifts_by_dates(self):
         query = "SELECT date, first_last_name, SUM(tariff_price * amount), act_number FROM shifts, employees e " + \
                 "WHERE employee_id = e.id AND was_paid = FALSE GROUP BY first_last_name, date, act_number ORDER BY date, first_last_name;"
         self.curr.execute(query)
@@ -247,6 +260,21 @@ class Database:
         total_debt = 0
         if debts:
             result = {}
+            '''
+            {
+                date1: [
+                    {
+                        "person": first_last_name + <номер акта если их больше 1>,
+                        "debt": tariff_price * amount
+                    },
+                    {
+                        "person": ...,
+                        "debt": ...
+                    }
+                ]
+                date2: ...
+            }
+            '''
             for debt in debts:
                 total_debt += debt[2]
                 if debt[0] not in result:
@@ -261,18 +289,7 @@ class Database:
             result = None
         return result, total_debt
 
-    def get_all_shifts(self):
-        query = "SELECT date, first_last_name, phone_number, product_barcode, product_name, tariff_price, amount, act_number, was_paid " + \
-                "FROM shifts, employees e WHERE employee_id = e.id ORDER BY date, first_last_name;"
-        self.curr.execute(query)
-        result = self.curr.fetchall()
-        if result:
-            result = list(map(lambda x: list(x), result))
-        else:
-            result = None
-        return result
-
-    def get_next_debt_to_pay(self, offset=0):
+    def get_next_payment_by_dates(self, offset=0):
         query = "SELECT date, first_last_name, act_number, SUM(tariff_price * amount) FROM shifts, employees e " + \
                 "WHERE employee_id = e.id AND was_paid = FALSE GROUP BY first_last_name, date, act_number " + \
                 f"ORDER BY date, first_last_name, act_number OFFSET {offset} LIMIT 1;"
@@ -293,8 +310,63 @@ class Database:
         specific_info = list(map(lambda x: list(x[2:]), specific_info))
         return general_info, specific_info
 
-    def mark_shift_as_paid(self, shift_date: date, phone_number: str, act_number: int):
+    def get_next_payment_by_people(self, offset=0):
+        query = "SELECT DISTINCT id, date FROM employees JOIN shifts ON id = employee_id WHERE was_paid = FALSE ORDER BY date;"
+        self.curr.execute(query)
+        people_ids = self.curr.fetchall()
+        if people_ids:
+            people_ids = list(map(lambda x: list(x), people_ids))
+        else:
+            return None, None
+        seen = set()
+        people_ids_unique = [x for x in people_ids if not (x[0] in seen or seen.add(x[0]))]
+        if offset >= len(people_ids_unique):
+            return None, None
+        person_id = people_ids_unique[offset][0]
+        query = f"SELECT id, first_last_name, phone_number, bank FROM employees WHERE id = {person_id};"
+        self.curr.execute(query)
+        person_info = self.curr.fetchall()
+        person_info = list(person_info[0])
+
+        query = f"SELECT DISTINCT date, act_number FROM shifts WHERE employee_id = {person_id} AND was_paid = FALSE ORDER BY date, act_number;"
+        self.curr.execute(query)
+        person_shifts = self.curr.fetchall()
+        shifts_info = {}
+        '''
+        {
+            date1: {
+                act1: [[product_barcode, product_name, tariff_price, amount], [product_barcode, product_name, tariff_price, amount], ...]
+                act2: ...
+            },
+            date2: ...
+        }
+        '''
+        total_debt = 0
+        for person_shift in person_shifts:
+            if person_shift[0] not in shifts_info:
+                shifts_info[person_shift[0]] = {}
+            shifts_info[person_shift[0]][person_shift[1]] = []
+            current_date_act = shifts_info[person_shift[0]][person_shift[1]]
+            query = f"SELECT product_barcode, product_name, tariff_price, amount FROM shifts WHERE employee_id = {person_id} AND date = '{person_shift[0]}' AND act_number = {person_shift[1]};"
+            self.curr.execute(query)
+            packages = self.curr.fetchall()
+            if packages:
+                packages = list(map(lambda x: list(x), packages))
+                for package_info in packages:
+                    total_debt += package_info[2] * package_info[3]
+                    current_date_act.append(package_info)
+            else:
+                current_date_act.append(None)
+        person_info.append(total_debt)
+        return person_info, shifts_info
+
+    def mark_shift_as_paid__aggregation_by_dates(self, shift_date: date, phone_number: str, act_number: int):
         query = f"UPDATE shifts SET was_paid = TRUE WHERE date = '{shift_date}' AND act_number = {act_number} AND " + \
                 f"employee_id = (SELECT DISTINCT employee_id FROM shifts JOIN employees e ON employee_id = e.id WHERE phone_number = '{phone_number}');"
+        self.curr.execute(query)
+        self.connection.commit()
+
+    def mark_shift_as_paid__aggregation_by_people(self, employee_id: int):
+        query = f"UPDATE shifts SET was_paid = TRUE WHERE employee_id = {employee_id};"
         self.curr.execute(query)
         self.connection.commit()

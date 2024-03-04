@@ -1,7 +1,11 @@
-from data import TOKEN, db_dbname, db_host, db_user, db_password
-from database import Database
 import os
+from datetime import time, datetime
+import pytz
 from typing import Optional, Tuple
+import logging
+import pandas as pd
+import openpyxl as xl
+from openpyxl.styles import Alignment, GradientFill
 from telegram import (
     Chat,
     ChatMember,
@@ -26,12 +30,11 @@ from telegram.ext import (
     CallbackContext,
     Defaults,
 )
-import logging
-import pandas as pd
-import openpyxl as xl
-from openpyxl.styles import Alignment, GradientFill
-from datetime import time, datetime
-import pytz
+from data import TOKEN, db_dbname, db_host, db_user, db_password
+from database import Database
+from debt_display_handler import DebtDisplayHandler
+from debt_display_strategies.aggregation_by_dates import AggregationByDates
+from debt_display_strategies.aggregation_by_people import AggregationByPeople
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -239,15 +242,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 CURRENT_OFFSET += 1
                 await context.bot.send_message(GROUP_ID, 'Пока пропускаю, но мы вернемся к этому долгу в конце)')
             else:
-                db.mark_shift_as_paid(CURRENT_DEBT['date'], CURRENT_DEBT['phone_number'], CURRENT_DEBT['act_number'])
+                debt_display_handler.mark_shift_as_paid(CURRENT_DEBT)
                 await context.bot.send_message(GROUP_ID, 'Кайф 🔥')
 
-            general_info, specific_info = db.get_next_debt_to_pay(CURRENT_OFFSET)
-            if general_info is None:
+            msg, CURRENT_DEBT = debt_display_handler.get_next_payment_message(offset=CURRENT_OFFSET)
+            if not msg:
                 if CURRENT_OFFSET != 0:
                     CURRENT_OFFSET = 0
-                    general_info, specific_info = db.get_next_debt_to_pay(CURRENT_OFFSET)
-                    if general_info is None:
+                    msg, CURRENT_DEBT = debt_display_handler.get_next_payment_message()
+                    if not msg:
                         await context.bot.send_message(GROUP_ID, 'Поздравляю, все задолженности на текущий момент успешно оплачены! ✅🦾')
                         set_group_status('accountant', Status_MAIN)
                         return
@@ -255,19 +258,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await context.bot.send_message(GROUP_ID, 'Поздравляю, все задолженности на текущий момент успешно оплачены! ✅🦾')
                     set_group_status('accountant', Status_MAIN)
                     return
-
-            date, first_last_name, phone_number, act_number, bank, debt = general_info
-            CURRENT_DEBT = {'date': date, 'phone_number': phone_number, 'act_number': act_number}
-            debt = f"{debt:_}".replace('_', '.') + ",00 ₽"
-            msg = f'Дата задолженности: {date.strftime("%d.%m.%Y")}\nАкт: {act_number}\nСотрудник: {first_last_name}\n' + \
-                  f'Телефон: {phone_number}\nБанк: {bank.capitalize()}\nНеобходимо заплатить: {debt}'
-            msg += f'\n\nУпакованные товары:'
-            product_no = 1
-            for product in specific_info:
-                barcode, name, tariff, amount = product
-                msg += f'\n{product_no}) {barcode}, "{name}"  ->  {tariff}₽ ✖ {amount} шт.'
-                product_no += 1
-            await context.bot.send_message(GROUP_ID, msg, reply_markup=InlineKeyboardMarkup(PAY_SALARIES_INLINE_KEYBOARD))
+            await context.bot.send_message(GROUP_ID, msg, parse_mode='markdown', reply_markup=InlineKeyboardMarkup(PAY_SALARIES_INLINE_KEYBOARD))
 
     elif ACCOUNTANT_GROUP_STATUS == Status_PRESSING_BUTTON_TO_DECIDE_WHETHER_TO_PAY_SALARIES:
         GROUP_ID = ACCOUNTANT_GROUP_ID
@@ -277,21 +268,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             set_group_status('accountant', Status_MAIN)
         else:
             CURRENT_OFFSET = 0
+            msg, CURRENT_DEBT = debt_display_handler.get_next_payment_message()
             set_group_status('accountant', Status_PRESSING_BUTTON_WHILE_PAYING_SALARIES)
-            general_info, specific_info = db.get_next_debt_to_pay()
-            date, first_last_name, phone_number, act_number, bank, debt = general_info
-            CURRENT_DEBT = {'date': date, 'phone_number': phone_number, 'act_number': act_number}
-            debt = f"{debt:_}".replace('_', '.') + ",00 ₽"
-            msg = f'Дата задолженности: {date.strftime("%d.%m.%Y")}\nАкт: {act_number}\nСотрудник: {first_last_name}\n' + \
-                  f'Телефон: {phone_number}\nБанк: {bank.capitalize()}\nНеобходимо заплатить: {debt}'
-            msg += f'\n\nУпакованные товары:'
-            product_no = 1
-            for product in specific_info:
-                barcode, name, tariff, amount = product
-                msg += f'\n{product_no}) {barcode}, "{name}"  ->  {tariff}₽ ✖ {amount} шт.'
-                product_no += 1
             await context.bot.send_message(GROUP_ID, 'Начнем с начала ⬇️')
-            await context.bot.send_message(GROUP_ID, msg, reply_markup=InlineKeyboardMarkup(PAY_SALARIES_INLINE_KEYBOARD))
+            await context.bot.send_message(GROUP_ID, msg, parse_mode='markdown', reply_markup=InlineKeyboardMarkup(PAY_SALARIES_INLINE_KEYBOARD))
 
 
 def prettify_phone_number(phone_number: str) -> str:
@@ -351,18 +331,10 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if error_log:
             await context.bot.send_message(GROUP_ID, f'Не удалось прочитать файл (\n\n{error_log}')
             return
-        unpaid_shifts, total_debt = db.get_unpaid_shifts()
-        if unpaid_shifts is None:
-            await context.bot.send_message(GROUP_ID, 'Не нашел новых задолженностей в файле, ты проверял меня, да? 😎')
-        else:
-            msg = f'У нас появились новые задолженности. Вот все они в одном списке 👇'
-            msg += f'\n\nОбщая сумма задолженностей: ' + f'{total_debt:_}'.replace('_', '.') + ',00 ₽'
-            for day in unpaid_shifts.keys():
-                msg += f'\n\nЗа {day.strftime("%d.%m.%Y")}:'
-                no = 1
-                for salary in unpaid_shifts[day]:
-                    msg += f"\n{no}) {salary['person']} -> " + f"{salary['debt']:_}".replace('_', '.') + ',00 ₽'
-                    no += 1
+
+        msg = debt_display_handler.get_unpaid_shifts_message()
+        if msg:
+            msg = f'У нас появились новые задолженности. Вот все они в одном списке 👇\n\n' + msg
             if ACCOUNTANT_GROUP_STATUS in [Status_MAIN, Status_PRESSING_BUTTON_TO_DECIDE_WHETHER_TO_PAY_SALARIES]:
                 set_group_status('accountant', Status_PRESSING_BUTTON_TO_DECIDE_WHETHER_TO_PAY_SALARIES)
                 buttons = [[InlineKeyboardButton('Не сейчас 🧑‍💻', callback_data='не сейчас'),
@@ -371,6 +343,8 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await context.bot.send_message(ACCOUNTANT_GROUP_ID, msg)
             await context.bot.send_message(GROUP_ID, 'Записал все в базу данных и написал в чат бухгалтера ✅')
+        else:
+            await context.bot.send_message(GROUP_ID, 'Не нашел новых задолженностей в файле, ты проверял меня, да? 😎')
 
 
 async def command_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -559,37 +533,20 @@ async def command_pay_salaries(update: Update, context: ContextTypes.DEFAULT_TYP
         await context.bot.send_message(GROUP_ID, 'Сначала заверши предыдущее действие, нажав на одну из кнопок')
         return
 
-    unpaid_shifts, total_debt = db.get_unpaid_shifts()
-    if unpaid_shifts is None:
+    msg = debt_display_handler.get_unpaid_shifts_message()
+    if msg:
+        msg = f'Отличная идея! Вот список задолженностей на данный момент 👇\n\n' + msg
+        await context.bot.send_message(ACCOUNTANT_GROUP_ID, msg)
+    else:
         await context.bot.send_message(GROUP_ID, 'Никаких задолженностей на текущий момент нет!')
         return
-    msg = f'Отличная идея! Вот список задолженностей на данный момент 👇'
-    msg += f'\n\nОбщая сумма задолженностей: ' + f'{total_debt:_}'.replace('_', '.') + ',00 ₽'
-    for day in unpaid_shifts.keys():
-        msg += f'\n\nЗа {day.strftime("%d.%m.%Y")}:'
-        no = 1
-        for salary in unpaid_shifts[day]:
-            msg += f"\n{no}) {salary['person']}  ->  " + f"{salary['debt']:_}".replace('_', '.') + ',00 ₽'
-            no += 1
-    await context.bot.send_message(ACCOUNTANT_GROUP_ID, msg)
 
     global CURRENT_OFFSET, CURRENT_DEBT
     CURRENT_OFFSET = 0
     set_group_status('accountant', Status_PRESSING_BUTTON_WHILE_PAYING_SALARIES)
-    general_info, specific_info = db.get_next_debt_to_pay()
-    date, first_last_name, phone_number, act_number, bank, debt = general_info
-    CURRENT_DEBT = {'date': date, 'phone_number': phone_number, 'act_number': act_number}
-    debt = f"{debt:_}".replace('_', '.') + ",00 ₽"
-    msg = f'Дата задолженности: {date.strftime("%d.%m.%Y")}\nАкт: {act_number}\nСотрудник: {first_last_name}\n' + \
-          f'Телефон: {phone_number}\nБанк: {bank.capitalize()}\nНеобходимо заплатить: {debt}'
-    msg += f'\n\nУпакованные товары:'
-    product_no = 1
-    for product in specific_info:
-        barcode, name, tariff, amount = product
-        msg += f'\n{product_no}) {barcode}, "{name}"  ->  {tariff}₽ ✖ {amount} шт.'
-        product_no += 1
+    msg, CURRENT_DEBT = debt_display_handler.get_next_payment_message()
     await context.bot.send_message(GROUP_ID, 'Начнем с начала ⬇️')
-    await context.bot.send_message(GROUP_ID, msg, reply_markup=InlineKeyboardMarkup(PAY_SALARIES_INLINE_KEYBOARD))
+    await context.bot.send_message(GROUP_ID, msg, parse_mode='markdown', reply_markup=InlineKeyboardMarkup(PAY_SALARIES_INLINE_KEYBOARD))
 
 
 async def command_get_shifts_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -703,19 +660,12 @@ def read_group_ids():
 
 
 async def debt_reminder(context: CallbackContext):
-    unpaid_shifts, total_debt = db.get_unpaid_shifts()
-    if unpaid_shifts is None:
+    msg = debt_display_handler.get_unpaid_shifts_message()
+    if msg:
+        msg = 'Хочу напомнить, что на данный момент у нас есть некоторые задолженности перед работниками склада, было бы неплохо их погасить) 👇\n\n' + msg
+        await context.bot.send_message(ACCOUNTANT_GROUP_ID, msg)
+    else:
         await context.bot.send_message(ACCOUNTANT_GROUP_ID, 'Если кому-то интересно, то на данный момент никаких задолженностей у нас нет 🤓')
-        return
-    msg = 'Хочу напомнить, что на данный момент у нас есть некоторые задолженности перед работниками склада, было бы неплохо их погасить) 👇'
-    msg += f'\n\nОбщая сумма задолженностей: ' + f'{total_debt:_}'.replace('_', '.') + ',00 ₽'
-    for day in unpaid_shifts.keys():
-        msg += f'\n\nЗа {day.strftime("%d.%m.%Y")}:'
-        no = 1
-        for salary in unpaid_shifts[day]:
-            msg += f"\n{no}) {salary['person']}  ->  " + f"{salary['debt']:_}".replace('_', '.') + ',00 ₽'
-            no += 1
-    await context.bot.send_message(ACCOUNTANT_GROUP_ID, msg)
 
 
 def run_bot():
@@ -791,6 +741,9 @@ if __name__ == '__main__':
     else:
         for file_name in os.listdir("File"):
             os.remove(f"File/{file_name}")
+
+    # Инициализация нужной стратегии для формата сообщений при оплате задолженностей
+    debt_display_handler = DebtDisplayHandler(AggregationByPeople())
 
     # Инициализация объекта базы данных
     db = Database(db_dbname=db_dbname,

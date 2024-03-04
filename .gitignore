@@ -1,6 +1,7 @@
 # Pycharm files
 .idea/*
 __pycache__/*
+*/__pycache__/*
 
 # Sensitive files
 data.py
