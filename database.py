@@ -219,9 +219,9 @@ class Database:
                     break
                 product_barcode = str(good_info[0]) if good_info[0] else ''
                 product_name = str(good_info[2])
-                tariff_price = int(good_info[1])
+                tariff_price = float(good_info[1])
                 for i in range(len(employee_ids)):
-                    amount = int(goods.iloc[row, 4 + i])
+                    amount = float(goods.iloc[row, 4 + i])
                     if amount > 0:
                         query = f"INSERT INTO shifts (employee_id, product_barcode, product_name, tariff_price, amount, date, act_number) " + \
                                 f"VALUES({employee_ids[i]}, '{product_barcode}', '{product_name}', {tariff_price}, {amount}, '{shift_date}', {act_numbers[i]});"
@@ -276,15 +276,16 @@ class Database:
             }
             '''
             for debt in debts:
+                debt = list(debt)
                 total_debt += debt[2]
                 if debt[0] not in result:
                     result[debt[0]] = []
                 if debt[3] == 1:
-                    result[debt[0]].append({'person': debt[1], 'debt': debt[2]})
+                    result[debt[0]].append({'person': debt[1], 'debt': round(debt[2], 2)})
                 else:
                     if debt[3] == 2:
                         result[debt[0]] = [{'person': f"{x['person']} (1 акт)", 'debt': x['debt']} if x['person'] == debt[1] else x for x in result[debt[0]]]
-                    result[debt[0]].append({'person': f'{debt[1]} ({debt[3]} акт)', 'debt': debt[2]})
+                    result[debt[0]].append({'person': f'{debt[1]} ({debt[3]} акт)', 'debt': round(debt[2], 2)})
         else:
             result = None
         return result, total_debt
@@ -297,6 +298,7 @@ class Database:
         general_info = self.curr.fetchall()
         if general_info:
             general_info = list(general_info[0])
+            general_info[3] = round(general_info[3], 2)
         else:
             return None, None
 
@@ -311,17 +313,17 @@ class Database:
         return general_info, specific_info
 
     def get_next_payment_by_people(self, offset=0):
-        query = "SELECT DISTINCT id, date FROM employees JOIN shifts ON id = employee_id WHERE was_paid = FALSE ORDER BY date;"
+        query = "SELECT DISTINCT employee_id, date FROM shifts WHERE was_paid = FALSE ORDER BY date;"
         self.curr.execute(query)
         people_ids = self.curr.fetchall()
         if people_ids:
             people_ids = list(map(lambda x: list(x), people_ids))
         else:
-            return None, None
+            return None, None, None
         seen = set()
         people_ids_unique = [x for x in people_ids if not (x[0] in seen or seen.add(x[0]))]
         if offset >= len(people_ids_unique):
-            return None, None
+            return None, None, None
         person_id = people_ids_unique[offset][0]
         query = f"SELECT id, first_last_name, phone_number, bank FROM employees WHERE id = {person_id};"
         self.curr.execute(query)
@@ -358,7 +360,7 @@ class Database:
             else:
                 current_date_act.append(None)
         person_info.append(total_debt)
-        return person_info, shifts_info
+        return person_info, shifts_info, len(people_ids_unique) - 1
 
     def mark_shift_as_paid__aggregation_by_dates(self, shift_date: date, phone_number: str, act_number: int):
         query = f"UPDATE shifts SET was_paid = TRUE WHERE date = '{shift_date}' AND act_number = {act_number} AND " + \

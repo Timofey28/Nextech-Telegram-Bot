@@ -6,24 +6,27 @@ class AggregationByPeople(DebtDisplayStrategy):
         unpaid_shifts, total_debt = self.db.get_unpaid_shifts_by_dates()
         if unpaid_shifts is None:
             return ''
-        message = f'Общая сумма задолженностей: ' + f'{total_debt:_}'.replace('_', '.') + ',00 ₽'
+        total_debt = round(float(total_debt), 2)
+        message = f'Общая сумма задолженностей: ' + f'{total_debt:_}'.replace('.', ',').replace('_', '.') + f"{'0 ₽' if total_debt * 100 % 10 == 0 else ' ₽'}"
         for day in unpaid_shifts.keys():
             message += f'\n\nЗа {day.strftime("%d.%m.%Y")}:'
             no = 1
             for salary in unpaid_shifts[day]:
-                message += f"\n{no}) {salary['person']} -> " + f"{salary['debt']:_}".replace('_', '.') + ',00 ₽'
+                debt = float(salary['debt'])
+                message += f"\n{no}) {salary['person']} -> " + f"{debt:_}".replace('.', ',').replace('_', '.') + f"{'0 ₽' if debt * 100 % 10 == 0 else ' ₽'}"
                 no += 1
         return message
 
     def get_next_payment_message(self, offset=0) -> [str, dict]:
-        general_info, specific_info = self.db.get_next_payment_by_people(offset)
+        general_info, specific_info, people_left = self.db.get_next_payment_by_people(offset)
         if general_info is None:
             return '', None
         employee_id, first_last_name, phone_number, bank, debt = general_info
         current_debt = {'employee_id': employee_id}
-        debt = f"{debt:_}".replace('_', '.') + ",00 ₽"
+        debt = round(float(debt), 2)
+        debt = f"{debt:_}".replace('.', ',').replace('_', '.') + f"{'0 ₽' if debt * 100 % 10 == 0 else ' ₽'}"
         message = f'Сотрудник: {first_last_name}\nТелефон: `{self.prettify_phone_number(phone_number)}`\n' + \
-                  f'Банк: {bank.capitalize()}\nНеобходимо заплатить: {debt}'
+                  f'Банк: {bank.capitalize()}\nНеобходимо заплатить: {debt}\nЛюдей осталось: {people_left if people_left else "этот последний"}'
         message += f'\n\nУпакованные товары:'
         for day in specific_info:
             for act_number in specific_info[day]:

@@ -35,8 +35,8 @@ shifts {
 	employee_id int *> employees.id
 	product_barcode varchar(50)
 	product_name varchar(70)
-	tariff_price int
-	amount int
+	tariff_price numeric
+	amount numeric
 	date date
 	act_number int
 	was_paid boolean

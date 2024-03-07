@@ -332,19 +332,53 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(GROUP_ID, f'Не удалось прочитать файл (\n\n{error_log}')
             return
 
-        msg = debt_display_handler.get_unpaid_shifts_message()
-        if msg:
-            msg = f'У нас появились новые задолженности. Вот все они в одном списке 👇\n\n' + msg
-            if ACCOUNTANT_GROUP_STATUS in [Status_MAIN, Status_PRESSING_BUTTON_TO_DECIDE_WHETHER_TO_PAY_SALARIES]:
-                set_group_status('accountant', Status_PRESSING_BUTTON_TO_DECIDE_WHETHER_TO_PAY_SALARIES)
-                buttons = [[InlineKeyboardButton('Не сейчас 🧑‍💻', callback_data='не сейчас'),
-                            InlineKeyboardButton('Оплатить 🏃‍♂️', callback_data='оплатить')]]
-                await context.bot.send_message(ACCOUNTANT_GROUP_ID, msg, reply_markup=InlineKeyboardMarkup(buttons))
-            else:
-                await context.bot.send_message(ACCOUNTANT_GROUP_ID, msg)
-            await context.bot.send_message(GROUP_ID, 'Записал все в базу данных и написал в чат бухгалтера ✅')
+        informator = 'informator'
+        current_jobs = context.job_queue.get_jobs_by_name(informator)
+        if current_jobs:
+            for job in current_jobs:
+                job.schedule_removal()
+        context.job_queue.run_once(inform_accountant_about_new_debts, 2, name=informator)
+
+        await context.bot.send_message(GROUP_ID, 'Записал в базу данных ✅')
+
+
+async def inform_accountant_about_new_debts(context: CallbackContext):
+    msg = debt_display_handler.get_unpaid_shifts_message()
+    if msg:
+        msg = f'У нас появились новые задолженности. Вот все они в одном списке 👇\n\n' + msg
+        if ACCOUNTANT_GROUP_STATUS in [Status_MAIN, Status_PRESSING_BUTTON_TO_DECIDE_WHETHER_TO_PAY_SALARIES]:
+            set_group_status('accountant', Status_PRESSING_BUTTON_TO_DECIDE_WHETHER_TO_PAY_SALARIES)
+            buttons = [[InlineKeyboardButton('Не сейчас 🧑‍💻', callback_data='не сейчас'),
+                        InlineKeyboardButton('Оплатить 🏃‍♂️', callback_data='оплатить')]]
+            await context.bot.send_message(ACCOUNTANT_GROUP_ID, msg, reply_markup=InlineKeyboardMarkup(buttons))
         else:
-            await context.bot.send_message(GROUP_ID, 'Не нашел новых задолженностей в файле, ты проверял меня, да? 😎')
+            await context.bot.send_message(ACCOUNTANT_GROUP_ID, msg)
+    else:
+        await context.bot.send_message(ADMIN_GROUP_ID, 'Не нашел новых задолженностей в файле, ты проверял меня, да? 😎')
+
+
+async def command_pay_salaries(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    GROUP_ID = ACCOUNTANT_GROUP_ID
+    if update.effective_chat.id != GROUP_ID:
+        return
+    if ACCOUNTANT_GROUP_STATUS != Status_MAIN:
+        await context.bot.send_message(GROUP_ID, 'Сначала заверши предыдущее действие, нажав на одну из кнопок')
+        return
+
+    msg = debt_display_handler.get_unpaid_shifts_message()
+    if msg:
+        msg = f'Отличная идея! Вот список задолженностей на данный момент 👇\n\n' + msg
+        await context.bot.send_message(ACCOUNTANT_GROUP_ID, msg)
+    else:
+        await context.bot.send_message(GROUP_ID, 'Никаких задолженностей на текущий момент нет!')
+        return
+
+    global CURRENT_OFFSET, CURRENT_DEBT
+    CURRENT_OFFSET = 0
+    set_group_status('accountant', Status_PRESSING_BUTTON_WHILE_PAYING_SALARIES)
+    msg, CURRENT_DEBT = debt_display_handler.get_next_payment_message()
+    await context.bot.send_message(GROUP_ID, 'Начнем с начала ⬇️')
+    await context.bot.send_message(GROUP_ID, msg, parse_mode='markdown', reply_markup=InlineKeyboardMarkup(PAY_SALARIES_INLINE_KEYBOARD))
 
 
 async def command_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -363,6 +397,8 @@ async def command_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not context.job_queue.jobs():
             context.job_queue.run_daily(debt_reminder, time(17, 0, 0, 0))
             await context.bot.send_message(ACCOUNTANT_GROUP_ID, '👌')
+        else:
+            await context.bot.send_message(ACCOUNTANT_GROUP_ID, 'AAAAAAAAAAAAAAAAAAAA')
 
 
 async def command_add_client(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -523,30 +559,6 @@ async def command_check_last_message(update: Update, context: ContextTypes.DEFAU
     except Exception as e:
         logging.error(str(e))
         await context.bot.send_message(GROUP_ID, f'Что-то пошло не так...\n{str(e)}')
-
-
-async def command_pay_salaries(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    GROUP_ID = ACCOUNTANT_GROUP_ID
-    if update.effective_chat.id != GROUP_ID:
-        return
-    if ACCOUNTANT_GROUP_STATUS != Status_MAIN:
-        await context.bot.send_message(GROUP_ID, 'Сначала заверши предыдущее действие, нажав на одну из кнопок')
-        return
-
-    msg = debt_display_handler.get_unpaid_shifts_message()
-    if msg:
-        msg = f'Отличная идея! Вот список задолженностей на данный момент 👇\n\n' + msg
-        await context.bot.send_message(ACCOUNTANT_GROUP_ID, msg)
-    else:
-        await context.bot.send_message(GROUP_ID, 'Никаких задолженностей на текущий момент нет!')
-        return
-
-    global CURRENT_OFFSET, CURRENT_DEBT
-    CURRENT_OFFSET = 0
-    set_group_status('accountant', Status_PRESSING_BUTTON_WHILE_PAYING_SALARIES)
-    msg, CURRENT_DEBT = debt_display_handler.get_next_payment_message()
-    await context.bot.send_message(GROUP_ID, 'Начнем с начала ⬇️')
-    await context.bot.send_message(GROUP_ID, msg, parse_mode='markdown', reply_markup=InlineKeyboardMarkup(PAY_SALARIES_INLINE_KEYBOARD))
 
 
 async def command_get_shifts_data(update: Update, context: ContextTypes.DEFAULT_TYPE):

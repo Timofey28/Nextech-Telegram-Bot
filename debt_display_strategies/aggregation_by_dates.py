@@ -6,12 +6,14 @@ class AggregationByDates(DebtDisplayStrategy):
         unpaid_shifts, total_debt = self.db.get_unpaid_shifts_by_dates()
         if unpaid_shifts is None:
             return ''
-        message = f'Общая сумма задолженностей: ' + f'{total_debt:_}'.replace('_', '.') + ',00 ₽'
+        total_debt = float(total_debt)
+        message = f'Общая сумма задолженностей: ' + f'{total_debt:_}'.replace('.', ',').replace('_', '.') + f"{'0 ₽' if total_debt * 100 % 10 == 0 else ' ₽'}"
         for day in unpaid_shifts.keys():
             message += f'\n\nЗа {day.strftime("%d.%m.%Y")}:'
             no = 1
             for salary in unpaid_shifts[day]:
-                message += f"\n{no}) {salary['person']} -> " + f"{salary['debt']:_}".replace('_', '.') + ',00 ₽'
+                debt = float(salary['debt'])
+                message += f"\n{no}) {salary['person']} -> " + f"{debt:_}".replace('.', ',').replace('_', '.') + f"{'0 ₽' if debt * 100 % 10 == 0 else ' ₽'}"
                 no += 1
         return message
 
