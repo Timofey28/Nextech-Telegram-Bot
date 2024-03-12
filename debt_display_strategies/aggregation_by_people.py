@@ -7,13 +7,15 @@ class AggregationByPeople(DebtDisplayStrategy):
         if unpaid_shifts is None:
             return ''
         total_debt = round(float(total_debt), 2)
-        message = f'Общая сумма задолженностей: ' + f'{total_debt:_}'.replace('.', ',').replace('_', '.') + f"{'0 ₽' if total_debt * 100 % 10 == 0 else ' ₽'}"
+        total_debt_str = f'{total_debt:_}'.replace('.', ',').replace('_', '.') + f"{'0 ₽' if total_debt * 10 % 1 < self.very_small_number else ' ₽'}"
+        message = f'Общая сумма задолженностей: {total_debt_str}'
         for day in unpaid_shifts.keys():
             message += f'\n\nЗа {day.strftime("%d.%m.%Y")}:'
             no = 1
             for salary in unpaid_shifts[day]:
-                debt = float(salary['debt'])
-                message += f"\n{no}) {salary['person']} -> " + f"{debt:_}".replace('.', ',').replace('_', '.') + f"{'0 ₽' if debt * 100 % 10 == 0 else ' ₽'}"
+                debt = round(float(salary['debt']), 2)
+                debt_str = f"{debt:_}".replace('.', ',').replace('_', '.') + f"{'0 ₽' if debt * 10 % 1 < self.very_small_number else ' ₽'}"
+                message += f"\n{no}) {salary['person']} -> {debt_str}"
                 no += 1
         return message
 
@@ -24,9 +26,9 @@ class AggregationByPeople(DebtDisplayStrategy):
         employee_id, first_last_name, phone_number, bank, debt = general_info
         current_debt = {'employee_id': employee_id}
         debt = round(float(debt), 2)
-        debt = f"{debt:_}".replace('.', ',').replace('_', '.') + f"{'0 ₽' if debt * 100 % 10 == 0 else ' ₽'}"
+        debt_str = f"{debt:_}".replace('.', ',').replace('_', '.') + f"{'0 ₽' if debt * 10 % 1 < self.very_small_number else ' ₽'}"
         message = f'Сотрудник: {first_last_name}\nТелефон: `{self.prettify_phone_number(phone_number)}`\n' + \
-                  f'Банк: {bank.capitalize()}\nНеобходимо заплатить: {debt}\nЛюдей осталось: {people_left if people_left else "этот последний"}'
+                  f'Банк: {bank.capitalize()}\nНеобходимо заплатить: {debt_str}\nЛюдей осталось: {people_left if people_left else "этот последний"}'
         message += f'\n\nУпакованные товары:'
         for day in specific_info:
             for act_number in specific_info[day]:

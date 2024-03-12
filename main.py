@@ -358,6 +358,8 @@ async def inform_accountant_about_new_debts(context: CallbackContext):
 
 
 async def command_pay_salaries(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if ACCOUNTANT_GROUP_STATUS == Status_PRESSING_BUTTON_TO_DECIDE_WHETHER_TO_PAY_SALARIES:
+        set_group_status('accountant', Status_MAIN)
     GROUP_ID = ACCOUNTANT_GROUP_ID
     if update.effective_chat.id != GROUP_ID:
         return
@@ -398,7 +400,7 @@ async def command_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.job_queue.run_daily(debt_reminder, time(17, 0, 0, 0))
             await context.bot.send_message(ACCOUNTANT_GROUP_ID, '👌')
         else:
-            await context.bot.send_message(ACCOUNTANT_GROUP_ID, 'AAAAAAAAAAAAAAAAAAAA')
+            await context.bot.send_message(ACCOUNTANT_GROUP_ID, 'Ты мне не нравишься')
 
 
 async def command_add_client(update: Update, context: ContextTypes.DEFAULT_TYPE):

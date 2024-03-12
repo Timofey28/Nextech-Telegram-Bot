@@ -168,19 +168,22 @@ class Database:
     def write_payments_data(self, payments_file_path: str):
         try:
             df = pd.read_excel(payments_file_path, header=None)
-            shift_date = datetime.strptime(
-                payments_file_path[payments_file_path.find('/') + 1:payments_file_path.rfind('.')], '%d%m%y').date()
+            shift_date = datetime.strptime(payments_file_path[payments_file_path.find('/') + 1:payments_file_path.rfind('.')], '%d%m%y').date()
             people = df.iloc[:3, 4:].copy()
-            people.dropna(axis='columns', how='all', inplace=True)
+            people = people.dropna(axis='columns', how='all')
             if people.empty:
                 error_log = 'Нет ни людей, ни телефонов 😔'
                 return error_log
-            people_without_phone_numbers, people_without_banks = [], []
+            people_without_phone_numbers, people_without_banks, incorrect_phone_numbers = [], [], []
             for i in range(people.shape[1]):
                 if type(people.iloc[0, i]) is float:
                     people_without_phone_numbers.append(people.iloc[2, i])
                 if type(people.iloc[1, i]) is float:
                     people_without_banks.append(people.iloc[2, i])
+                phone_number = str(people.iloc[0, i])
+                digits_amount = sum(1 for i in phone_number if i.isdigit())
+                if digits_amount != 11:
+                    incorrect_phone_numbers.append('"' + phone_number + '"')
             if people_without_phone_numbers:
                 if len(people_without_phone_numbers) == 1:
                     return f'Нет номера телефона у сотрудника по имени {people_without_phone_numbers[0]}'
@@ -191,6 +194,11 @@ class Database:
                     return f'Нет названия банка у сотрудника по имени {people_without_banks[0]}'
                 else:
                     return f"Нет названия банка у следующих сотрудников: {', '.join(people_without_banks)}"
+            if incorrect_phone_numbers:
+                if len(incorrect_phone_numbers) == 1:
+                    return f"Некорректный номер телефона: {incorrect_phone_numbers[0]}"
+                else:
+                    return f"Некорректные номера телефонов: {', '.join(incorrect_phone_numbers)}"
 
             employee_ids = []
             act_numbers = []
@@ -212,7 +220,7 @@ class Database:
 
             goods = df.iloc[4:, :4 + len(employee_ids)].copy()
             for i in range(4, 4 + len(employee_ids)):
-                goods[i].fillna(0, inplace=True)
+                goods[i] = goods[i].fillna(0)
             for row in range(goods.shape[0]):
                 good_info = list(goods.iloc[row, :][0:3])
                 if type(good_info[0]) is float and type(good_info[1]) is float and type(good_info[2]) is float:

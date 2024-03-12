@@ -6,14 +6,16 @@ class AggregationByDates(DebtDisplayStrategy):
         unpaid_shifts, total_debt = self.db.get_unpaid_shifts_by_dates()
         if unpaid_shifts is None:
             return ''
-        total_debt = float(total_debt)
-        message = f'Общая сумма задолженностей: ' + f'{total_debt:_}'.replace('.', ',').replace('_', '.') + f"{'0 ₽' if total_debt * 100 % 10 == 0 else ' ₽'}"
+        total_debt = round(float(total_debt), 2)
+        total_debt_str = f'{total_debt:_}'.replace('.', ',').replace('_', '.') + f"{'0 ₽' if total_debt * 10 % 1 < self.very_small_number else ' ₽'}"
+        message = f'Общая сумма задолженностей: {total_debt_str}'
         for day in unpaid_shifts.keys():
             message += f'\n\nЗа {day.strftime("%d.%m.%Y")}:'
             no = 1
             for salary in unpaid_shifts[day]:
-                debt = float(salary['debt'])
-                message += f"\n{no}) {salary['person']} -> " + f"{debt:_}".replace('.', ',').replace('_', '.') + f"{'0 ₽' if debt * 100 % 10 == 0 else ' ₽'}"
+                debt = round(float(salary['debt']), 2)
+                debt_str = f"{debt:_}".replace('.', ',').replace('_', '.') + f"{'0 ₽' if debt * 10 % 1 < self.very_small_number else ' ₽'}"
+                message += f"\n{no}) {salary['person']} -> {debt_str}"
                 no += 1
         return message
 
@@ -23,9 +25,10 @@ class AggregationByDates(DebtDisplayStrategy):
             return '', None
         date, first_last_name, phone_number, act_number, bank, debt = general_info
         current_debt = {'date': date, 'phone_number': phone_number, 'act_number': act_number}
-        debt = f"{debt:_}".replace('_', '.') + ",00 ₽"
+        debt = round(float(debt), 2)
+        debt_str = f"{debt:_}".replace('.', ',').replace('_', '.') + f"{'0 ₽' if debt * 10 % 1 < self.very_small_number else ' ₽'}"
         message = f'Дата задолженности: {date.strftime("%d.%m.%Y")}\nАкт: {act_number}\nСотрудник: {first_last_name}\n' + \
-                  f'Телефон: `{self.prettify_phone_number(phone_number)}`\nБанк: {bank.capitalize()}\nНеобходимо заплатить: {debt}'
+                  f'Телефон: `{self.prettify_phone_number(phone_number)}`\nБанк: {bank.capitalize()}\nНеобходимо заплатить: {debt_str}'
         message += f'\n\nУпакованные товары:'
         product_no = 1
         for product in specific_info:

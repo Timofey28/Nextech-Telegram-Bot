@@ -9,6 +9,7 @@ class DebtDisplayStrategy(ABC):
                            db_host=db_host,
                            db_user=db_user,
                            db_password=db_password)
+        self.very_small_number = 1e-9
 
     @abstractmethod
     def get_unpaid_shifts_message(self) -> str:
