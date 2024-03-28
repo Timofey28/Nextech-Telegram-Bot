@@ -5,6 +5,9 @@ __pycache__/*
 
 # Sensitive files
 data.py
+*.docx
+Contract_templates/*
+Contracts/*
 
 # Log files
 *.log

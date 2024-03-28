@@ -1,19 +1,42 @@
 
+contracts {
+	id serial pk increments unique
+	file_name varchar(100) unique
+	code varchar(30) unique
+	type varchar(10)
+	client_id int *> clients.id
+	client_company varchar(100)
+	date_of_conclusion date
+	is_active boolean def(TRUE)
+}
+
+actual_payments {
+	contract_id int *> contracts.id
+	date date
+	amount int
+}
+
+scheduled_payments {
+	contract_id int *> contracts.id
+	date date
+	amount int
+}
+
 clients {
-	id serial
+	id serial pk unique
 	surname varchar(30)
 	name varchar(30)
 	patronymic varchar(30)
 	sex varchar(6)
-	tg_id bigint
-	inn varchar(15)
+	tg_id bigint unique
+	inn varchar(15) unique
 	business_direction_id int *> business_directions.id
 	phone_number varchar(11)
 	email varchar(50)
 }
 
 sent_messages {
-	id serial
+	id serial pk increments unique
 	tg_id bigint *> clients.tg_id
 	message_id int
 	sending_datetime timestamp
@@ -21,11 +44,11 @@ sent_messages {
 
 business_directions {
 	id serial
-	name varchar(50)
+	name varchar(100)
 }
 
 employees {
-	id serial
+	id serial pk increments unique
 	first_last_name varchar(60)
 	phone_number varchar(11)
 	bank varchar(50)
@@ -41,3 +64,4 @@ shifts {
 	act_number int
 	was_paid boolean
 }
+

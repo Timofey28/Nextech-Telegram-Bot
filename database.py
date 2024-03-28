@@ -69,6 +69,16 @@ class Database:
         except:
             return False
 
+    def update_client(self, db_id: int, surname: str, name: str, patronymic: str, sex: str, inn: str, phone_number: str, email: str):
+        query = f"UPDATE clients SET surname = '{surname}', name = '{name}', patronymic = '{patronymic}', " \
+                f"sex = '{sex}', inn = '{inn}', phone_number = '{phone_number}', email = '{email}' WHERE id = {db_id};"
+        try:
+            self.curr.execute(query)
+            self.connection.commit()
+            return True
+        except:
+            return False
+
     def delete_client(self, tg_id: int):
         query = f"DELETE FROM sent_messages WHERE tg_id = {tg_id};"
         self.curr.execute(query)
@@ -94,12 +104,26 @@ class Database:
             result = None
         return result
 
-    def get_clients_from_business_direction(self, business_direction: str) -> list[list[str]]:
-        query = f"SELECT clients.name, surname, tg_id, phone_number FROM clients JOIN business_directions bd ON business_direction_id = bd.id WHERE bd.name = '{business_direction}';"
+    def get_clients_from_business_direction(self, business_direction: str):
+        query = f"SELECT clients.id, surname, clients.name, patronymic, sex, tg_id, inn, phone_number, email " \
+                f"FROM clients JOIN business_directions bd ON business_direction_id = bd.id WHERE bd.name = '{business_direction}';"
         self.curr.execute(query)
-        result = self.curr.fetchall()
-        if result:
-            result = list(map(lambda x: list(x), result))
+        answer = self.curr.fetchall()
+        if answer:
+            result = []
+            for line in answer:
+                idd, surname, name, patronymic, sex, tg_id, inn, phone_number, email = line
+                result.append({
+                    "id": idd,
+                    "surname": surname,
+                    "name": name,
+                    "patronymic": patronymic,
+                    "sex": sex,
+                    "tg_id": tg_id,
+                    "inn": inn,
+                    "phone_number": phone_number,
+                    "email": email
+                })
         else:
             result = None
         return result
@@ -380,3 +404,225 @@ class Database:
         query = f"UPDATE shifts SET was_paid = TRUE WHERE employee_id = {employee_id};"
         self.curr.execute(query)
         self.connection.commit()
+
+    def add_contract(self, file_name: str, code: str, contract_type: str, client_id: int, client_company: str, date_of_conclusion: date) -> int:
+        query = f"INSERT INTO contracts (file_name, code, type, client_id, client_company, date_of_conclusion) " + \
+                f"VALUES('{file_name}', '{code.lower()}', '{contract_type}', {client_id}, '{client_company}', '{date_of_conclusion}') RETURNING id;"
+        self.curr.execute(query)
+        self.connection.commit()
+        return self.curr.fetchall()[0][0]
+
+    def add_payment_dates_and_amounts(self, contract_id: int, scheduled_payments: list[[date, int]]) -> None:
+        for scheduled_payment in scheduled_payments:
+            query = f"INSERT INTO scheduled_payments (contract_id, date, amount) VALUES({contract_id}, '{scheduled_payment[0]}', {scheduled_payment[1]});"
+            self.curr.execute(query)
+        self.connection.commit()
+
+    def update_payment_dates_and_amounts(self, contract_id: int, scheduled_payments: list[[date, int]]) -> None:
+        query = f"DELETE FROM scheduled_payments WHERE contract_id = {contract_id};"
+        self.curr.execute(query)
+        for scheduled_payment in scheduled_payments:
+            query = f"INSERT INTO scheduled_payments (contract_id, date, amount) VALUES({contract_id}, '{scheduled_payment[0]}', {scheduled_payment[1]});"
+            self.curr.execute(query)
+        self.connection.commit()
+
+    def get_contracts_list(self):
+        query = f"SELECT clients.name, surname, file_name FROM contracts JOIN clients ON client_id = clients.id WHERE is_active = TRUE ORDER BY date_of_conclusion DESC;"
+        self.curr.execute(query)
+        active_contracts = self.curr.fetchall()
+        query = f"SELECT clients.name, surname, file_name FROM contracts JOIN clients ON client_id = clients.id WHERE is_active = FALSE ORDER BY date_of_conclusion DESC;"
+        self.curr.execute(query)
+        closed_contracts = self.curr.fetchall()
+        if not active_contracts:
+            active_contracts = None
+        if not closed_contracts:
+            closed_contracts = None
+        return active_contracts, closed_contracts
+
+    def get_business_directions_containing_active_contracts(self) -> list[str]:
+        query = f"SELECT DISTINCT bd.name FROM contracts JOIN clients ON client_id = clients.id JOIN business_directions bd " + \
+                f"ON clients.business_direction_id = bd.id WHERE is_active = TRUE"
+        self.curr.execute(query)
+        business_directions = self.curr.fetchall()
+        if business_directions:
+            business_directions = list(map(lambda x: x[0], business_directions))
+        else:
+            business_directions = None
+        return business_directions
+
+    def get_clients_having_active_contracts_from_business_direction(self, business_direction: str):
+        query = f"SELECT DISTINCT clients.id, clients.name, surname, phone_number FROM contracts JOIN clients ON client_id = clients.id " + \
+                f"JOIN business_directions bd ON business_direction_id = bd.id WHERE is_active = TRUE AND bd.name = '{business_direction}';"
+        self.curr.execute(query)
+        clients_ = self.curr.fetchall()
+        if clients_:
+            result = []
+            for client in clients_:
+                result.append({
+                    "id": client[0],
+                    "surname": client[1],
+                    "name": client[2],
+                    "phone_number": client[3],
+                })
+        else:
+            result = None
+        return result
+
+    def get_client_contracts(self, client_id: int):
+        query = f"SELECT id, file_name, type FROM contracts WHERE client_id = {client_id} AND is_active = TRUE;"
+        self.curr.execute(query)
+        contracts_ = self.curr.fetchall()
+        if not contracts_:
+            contracts_ = None
+        return contracts_
+
+    def mark_contract_closed(self, contract_id: int):
+        query = f"UPDATE contracts SET is_active = FALSE WHERE id = {contract_id};"
+        self.curr.execute(query)
+        self.connection.commit()
+
+    def get_scheduled_payment_dates_and_amounts(self, contract_id: int):
+        query = f"SELECT date, amount FROM scheduled_payments WHERE contract_id = {contract_id} ORDER BY date;"
+        self.curr.execute(query)
+        result = self.curr.fetchall()
+        if not result:
+            result = None
+        return result
+
+    def contract_code_exists(self, contract_code: str):
+        query = f"SELECT 1 FROM contracts WHERE code = '{contract_code.lower()}';"
+        self.curr.execute(query)
+        result = self.curr.fetchall()
+        if result:
+            return True
+        return False
+
+    def add_paid_payment(self, contract_code: str, payment_date: date, amount: int):
+        query = f"SELECT id FROM contracts WHERE code = '{contract_code.lower()}';"
+        self.curr.execute(query)
+        contract_id = self.curr.fetchall()[0][0]
+        query = f"INSERT INTO actual_payments (contract_id, date, amount) VALUES({contract_id}, '{payment_date}', {amount});"
+        self.curr.execute(query)
+        self.connection.commit()
+
+    def get_all_actual_payments(self):
+        query = f"SELECT TO_CHAR(date, 'DD.MM.YYYY'), UPPER(code), surname || ' ' || name || ' ' || patronymic, amount " + \
+                f"FROM actual_payments ap, contracts co, clients cl WHERE ap.contract_id = co.id AND co.client_id = cl.id ORDER BY date DESC;"
+        self.curr.execute(query)
+        result = self.curr.fetchall()
+        if not result:
+            result = None
+        return result
+
+    def get_contracts_payment_schedule(self, which: str):
+        assert which == 'regular' or which == 'onetime'
+        if which == 'regular':
+            query = "SELECT ARRAY[UPPER(code), name, surname] arr_cns, ARRAY_AGG(uni) FROM (SELECT code, cl.name name, surname, " + \
+                    "ARRAY[TO_CHAR(date, 'DD')::INT, amount] as uni FROM scheduled_payments sp, contracts co, clients cl " + \
+                    f"WHERE sp.contract_id = co.id AND co.client_id = cl.id AND type = 'regular' AND is_active = TRUE) dummy " + \
+                    "GROUP BY arr_cns ORDER BY arr_cns;"
+        else:
+            query = "SELECT ARRAY[UPPER(code), name, surname] arr_cns, ARRAY_AGG(uni) FROM (SELECT code, cl.name name, surname, " + \
+                    "ARRAY[TO_CHAR(date, 'YYYY')::INT, TO_CHAR(date, 'MM')::INT, TO_CHAR(date, 'DD')::INT, amount] as uni " + \
+                    "FROM scheduled_payments sp, contracts co, clients cl WHERE sp.contract_id = co.id AND " + \
+                    "co.client_id = cl.id AND type = 'onetime' AND is_active = TRUE) dummy GROUP BY arr_cns ORDER BY arr_cns;"
+        self.curr.execute(query)
+        result = self.curr.fetchall()
+        if not result:
+            result = None
+        return result
+
+    def get_contracts_debts(self):
+        query = "SELECT ARRAY[code, name, surname, type] arr, date_of_conclusion, ARRAY_AGG(uni), SUM(amount) FROM " + \
+                "(SELECT code, cl.name name, surname, type, date_of_conclusion, amount, ARRAY[TO_CHAR(date, 'DD')::INT, " + \
+                "amount] AS uni FROM scheduled_payments sp, contracts co, clients cl WHERE sp.contract_id = co.id AND " + \
+                "co.client_id = cl.id AND is_active = TRUE) dummy GROUP BY arr, date_of_conclusion;"
+        self.curr.execute(query)
+        result = self.curr.fetchall()
+        if not result:
+            result = None
+        return result
+
+    def get_paid_amount(self, code: str):
+        query = f"SELECT SUM(amount) FROM actual_payments ap, contracts co WHERE ap.contract_id = co.id AND code = '{code}';"
+        self.curr.execute(query)
+        result = self.curr.fetchall()[0][0]
+        if result is None:
+            result = 0
+        return result
+
+    def get_soonest_debts_cns(self, contract_type: str, by_what_day: str):
+        assert contract_type == 'regular' or contract_type == 'onetime'
+        assert by_what_day == 'today' or by_what_day == 'tomorrow'
+        query = 'SELECT code, cl.name, surname, date_of_conclusion FROM scheduled_payments sp, contracts co, clients cl ' + \
+                'WHERE sp.contract_id = co.id AND co.client_id = cl.id AND '
+        if contract_type == 'regular':
+            if by_what_day == 'today':
+                query += "type = 'regular' AND date = CURRENT_DATE;"
+            elif by_what_day == 'tomorrow':
+                query += "type = 'regular' AND date = CURRENT_DATE + INTERVAL '1 DAY';"
+        elif contract_type == 'onetime':
+            if by_what_day == 'today':
+                query += "type = 'onetime' AND date = CURRENT_DATE;"
+            elif by_what_day == 'tomorrow':
+                query += "type = 'onetime' AND date = CURRENT_DATE + INTERVAL '1 DAY';"
+        self.curr.execute(query)
+        result = self.curr.fetchall()
+        if not result:
+            result = None
+        return result
+
+    def get_total_scheduled_payment(self, contract_code: str, contract_type: str, upto: str = None):
+        assert contract_type == 'regular' or contract_type == 'onetime'
+        if contract_type == 'onetime':
+            assert upto == 'today' or upto == 'tomorrow'
+        query = ''
+        if contract_type == 'regular':
+            query = f"SELECT TO_CHAR(date, 'DD')::INT, amount FROM scheduled_payments sp JOIN contracts " + \
+                    f"ON sp.contract_id = contracts.id WHERE code = '{contract_code}';"
+        elif contract_type == 'onetime':
+            if upto == 'today':
+                query = f"SELECT SUM(amount) FROM scheduled_payments sp JOIN contracts ON sp.contract_id = contracts.id " + \
+                        f"WHERE code = '{contract_code}' AND date <= CURRENT_DATE;"
+            elif upto == 'tomorrow':
+                query = f"SELECT SUM(amount) FROM scheduled_payments sp JOIN contracts ON sp.contract_id = contracts.id " + \
+                        f"WHERE code = '{contract_code}' AND date <= CURRENT_DATE + INTERVAL '1 DAY';"
+        self.curr.execute(query)
+        result = self.curr.fetchall()
+        if contract_type == 'onetime':
+            result = result[0][0]
+            if result is None:
+                result = 0
+        return result
+
+    def get_total_actual_payment(self, contract_code: str):
+        query = f"SELECT SUM(amount) FROM actual_payments ap JOIN contracts ON ap.contract_id = contracts.id WHERE code = '{contract_code}';"
+        self.curr.execute(query)
+        result = self.curr.fetchall()[0][0]
+        if result is None:
+            result = 0
+        return result
+
+    def get_certain_day_scheduled_payment(self, contract_code: str, contract_type: str, day: str):
+        assert contract_type == 'regular' or contract_type == 'onetime'
+        assert day == 'today' or day == 'tomorrow'
+        query = ''
+        if contract_type == 'regular':
+            if day == 'today':
+                query = f"SELECT amount FROM scheduled_payments sp JOIN contracts ON sp.contract_id = contracts.id " + \
+                        f"WHERE code = '{contract_code}' AND TO_CHAR(date, 'DD')::INT = TO_CHAR(CURRENT_DATE, 'DD')::INT;"
+            elif day == 'tomorrow':
+                query = f"SELECT amount FROM scheduled_payments sp JOIN contracts ON sp.contract_id = contracts.id " + \
+                        f"WHERE code = '{contract_code}' AND TO_CHAR(date, 'DD')::INT = TO_CHAR(CURRENT_DATE + INTERVAL '1 DAY', 'DD')::INT;"
+        elif contract_type == 'onetime':
+            if day == 'today':
+                query = f"SELECT amount FROM scheduled_payments sp JOIN contracts ON sp.contract_id = contracts.id " + \
+                        f"WHERE code = '{contract_code}' AND date = CURRENT_DATE;"
+            elif day == 'tomorrow':
+                query = f"SELECT amount FROM scheduled_payments sp JOIN contracts ON sp.contract_id = contracts.id " + \
+                        f"WHERE code = '{contract_code}' AND date = CURRENT_DATE + INTERVAL '1 DAY';"
+        self.curr.execute(query)
+        result = self.curr.fetchall()[0][0]
+        if result is None:
+            result = 0
+        return result
